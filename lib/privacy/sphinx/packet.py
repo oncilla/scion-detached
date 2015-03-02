@@ -29,38 +29,39 @@ DEFAULT_GROUP_ELEM_LENGTH = 32
 class SphinxHeader(object):
     """
     Header for a Sphinx packet
+
+    :ivar dh_keyhalf_0: Diffie-Hellman key-half for the first node
+    :vartype dh_keyhalf_0: bytes
+    :ivar mac_0: MAC for the first node
+    :vartype mac_0: bytes
+    :ivar blinded_header: Blinded header containing next hops and MACs
+    :vartype blinded_header: bytes
+    :ivar first_hop: address (name) of the first-hop node
+    :vartype first_hop: int
     """
 
-    def __init__(self, dh_keyhalf_0, mac_0, blinded_header):
-        """
-        Create a new SphinxHeader.
-
-        :param dh_keyhalf_0: Diffie-Hellman key-half for the first node
-        :type dh_keyhalf_0: bytes
-        :param mac_0: MAC for the first node
-        :type mac_0: bytes
-        :param blinded_header: Blinded header containing next hops and MACs
-        :type blinded_header: bytes
-        :returns: the newly-created SphinxHeader instance
-        :rtype: SphinxHeader
-        """
+    def __init__(self, dh_keyhalf_0, mac_0, blinded_header, first_hop=None):
         self.dh_keyhalf_0 = dh_keyhalf_0
         self.mac_0 = mac_0
         self.blinded_header = blinded_header
+        self.first_hop = first_hop
 
     @classmethod
-    def create_header(cls, dh_keyhalf_0, shared_keys=None, next_hops=None):
+    def construct_header(cls, shared_keys, next_hops, dh_keyhalf_0=None,
+                         max_hops=DEFAULT_MAX_HOPS):
         """
         Create a new SphinxHeader
 
-        :param dh_keyhalf_0: Diffie-Hellman key-half for the first node
-        :type dh_keyhalf_0: bytes
         :param shared_keys: List of shared keys with all the nodes on the path
         :type shared_keys: list
         :param next_hops: list of node names (addresses) on the path
         :type next_hops: list
+        :param dh_keyhalf_0: Diffie-Hellman key-half for the first node
+        :type dh_keyhalf_0: bytes
+        :param max_hops: maximum number of nodes on the path
+        :type max_hops: int
         :returns: the newly-created SphinxHeader instance
-        :rtype: SphinxHeader
+        :rtype: :class:`SphinxHeader`
         """
         pass #TODO/daniele: implement this method
 
@@ -80,7 +81,7 @@ class SphinxHeader(object):
         :param group_elem_length: length of a group element (for Diffie-Hellman)
         :type max_hops: int
         :returns: the newly-created SphinxHeader instance
-        :rtype: SphinxHeader
+        :rtype: :class:`SphinxHeader`
         """
         assert isinstance(raw, bytes)
         dh_keyhalf_0 = raw[0:group_elem_length]
@@ -97,4 +98,29 @@ class SphinxHeader(object):
         :rtype: bytes
         """
         return self.dh_keyhalf_0 + self.mac_0 + self.blinded_header
+
+
+class SphinxPacket(object):
+    """
+    Sphinx packet, composed of a SphinxHeader and a payload.
+
+    :ivar header: the header of the SphinxPacket
+    :vartype header: :class:`SphinxHeader`
+    :ivar payload: the payload of the SphinxPacket
+    :vartype payload: bytes
+    """
+
+    def __init__(self, header, payload):
+        self.header = header
+        self.payload = payload
+
+    @classmethod
+    def construct_forward_packet(cls, message, shared_keys, next_hops,
+                                 dh_keyhalf_0=None, max_hops=DEFAULT_MAX_HOPS):
+        pass
+
+    @classmethod
+    def construct_reply_packet(cls, message, shared_key, header):
+        pass
+    
 
