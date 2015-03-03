@@ -19,6 +19,9 @@ This module defines the Sphinx node, main processing unit of the Sphinx protocol
 
 """
 
+from lib.privacy.sphinx.packet import SphinxPacket
+
+
 class ProcessingResult(object):
     """
     Result of the processing of a :class:`SphinxPacket`
@@ -27,9 +30,9 @@ class ProcessingResult(object):
     :vartype type: :class:`ProcessingResult.ResultType`
     :ivar result: the result of the processing. The format depends on the type:
         - if the type is FORWARD, it is (next_hop, packet);
-        - if the type is AT_DESTINATION, it is (payload_message);
-        - if the type is DROP, it is None or (error_message).
-    :vartype result: tuple
+        - if the type is AT_DESTINATION, it is payload_message;
+        - if the type is DROP, it is None or error_message.
+    :vartype result: tuple or string or bytes
     """
 
     class ResultType(object):
@@ -85,9 +88,30 @@ class SphinxNode(object):
         self.private_key = private_key
         self.name = name
 
+    def get_packet_processing_result(self, packet):
+        """
+        Process a Sphinx packet and return a :class:`ProcessingResult` instance.
+
+        :param packet: a Sphinx packet (can be parsed or not)
+        :type packet: bytes or :class:`SphinxPacket`
+        :returns: a :class:`ProcessingResult` instance with the result
+            of the processing of the input packet
+        :rtype: :class:`ProcessingResult`
+        """
+        if not isinstance(packet, SphinxPacket):
+            assert isinstance(packet, bytes)
+            #TODO/Daniele: modify parsing to support guessing
+            #    for different packet lengths
+            try:
+                packet = SphinxPacket.parse_bytes_to_packet(packet)
+            except Exception:
+                return ProcessingResult(ProcessingResult.ResultType.DROP)
+        #TODO/Daniele: Finish this method
+
     def process_packet(self, packet):
         """
-        Process a Sphinx packet
+        NOT IMPLEMENTED. Process a Sphinx packet. This function processes
+        a Sphinx packet, forwarding to the next node if necessary.
         """
-        pass
+        raise NotImplementedError("This method will not be implemented")
 
