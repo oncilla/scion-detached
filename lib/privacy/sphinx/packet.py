@@ -21,9 +21,29 @@ This module defines the Sphinx packet format.
 #TODO/dasoni: add Sphinx reference
 
 
-DEFAULT_MAX_HOPS = 8
-DEFAULT_ADDRESS_LENGTH = 16
+DEFAULT_MAX_HOPS = 8 # Default maximum number of hops on a path
+DEFAULT_ADDRESS_LENGTH = 16 # Default size of a node's address/name in bytes
+# Default size of a group element (for Diffie-Hellman) in bytes
 DEFAULT_GROUP_ELEM_LENGTH = 32
+DEFAULT_PAYLOAD_LENGTH = 512 # Default size of the payload in bytes
+MAC_SIZE = 16 # Size of a Messge Authentication Code in bytes
+
+
+def compute_header_size(max_hops=DEFAULT_MAX_HOPS,
+              address_length=DEFAULT_ADDRESS_LENGTH,
+              group_elem_length=DEFAULT_GROUP_ELEM_LENGTH):
+    """
+    Compute the size in bytes of a header.
+
+    :param max_hops: maximum number of nodes on the path
+    :type max_hops: int
+    :param address_length: length of a node's address/name
+    :type address_length: int
+    :param group_elem_length: length of a group element (for Diffie-Hellman)
+    :type group_elem_length: int
+    """
+    blinded_header_length = (address_length + MAC_SIZE) * max_hops
+    return group_elem_length + MAC_SIZE + blinded_header_length
 
 
 class SphinxHeader(object):
@@ -50,9 +70,9 @@ class SphinxHeader(object):
     def construct_header(cls, shared_keys, next_hops, dh_keyhalf_0=None,
                          max_hops=DEFAULT_MAX_HOPS):
         """
-        Create a new SphinxHeader
+        Constructs a new SphinxHeader
 
-        :param shared_keys: List of shared keys with all the nodes on the path
+        :param shared_keys: List of keys shared with each node on the path
         :type shared_keys: list
         :param next_hops: list of node names (addresses) on the path
         :type next_hops: list
@@ -76,18 +96,23 @@ class SphinxHeader(object):
         :type raw: bytes
         :param max_hops: maximum number of nodes on the path
         :type max_hops: int
-        :param address_length: length of a node address (name)
-        :type max_hops: int
+        :param address_length: length of a node's address/name
+        :type address_length: int
         :param group_elem_length: length of a group element (for Diffie-Hellman)
-        :type max_hops: int
+        :type group_elem_length: int
         :returns: the newly-created SphinxHeader instance
         :rtype: :class:`SphinxHeader`
         """
         assert isinstance(raw, bytes)
-        dh_keyhalf_0 = raw[0:group_elem_length]
-        mac_0 = raw[group_elem_length:group_elem_length+16]
-        blinded_header = raw[group_elem_length+16:
-                             group_elem_length+16+address_length*max_hops]
+        expected_length = compute_header_size(max_hops, address_length,
+                                              group_elem_length)
+        if len(raw) != expected_length:
+            raise Exception() #TODO/Daniele: Create specific exception
+        index_mac_0 = group_elem_length
+        index_blinded_header = index_mac_0 + MAC_SIZE
+        dh_keyhalf_0 = raw[0:index_mac_0]
+        mac_0 = raw[index_mac_0:index_blinded_header]
+        blinded_header = raw[index_blinded_header:]
         return SphinxHeader(dh_keyhalf_0, mac_0, blinded_header)
 
     def pack(self):
@@ -115,12 +140,75 @@ class SphinxPacket(object):
         self.payload = payload
 
     @classmethod
-    def construct_forward_packet(cls, message, shared_keys, next_hops,
-                                 dh_keyhalf_0=None, max_hops=DEFAULT_MAX_HOPS):
-        pass
+    def construct_forward_packet(cls, message, shared_keys, header):
+        """
+        Constructs a new SphinxPacket to be sent by the source.
+        It first constructs the header, then onion-encrypts the payload.
+
+        :param message: the message to be sent as payload
+        :type message: bytes or str
+        :param shared_keys: List of keys shared with each node on the path
+        :type shared_keys: list
+        :param header: the reply SphinxHeader
+        :type header: :class:`SphinxPacket`
+        :returns: the newly-created SphinxPacket instance
+        :rtype: :class:`SphinxPacket`
+        """
+        pass #TODO/daniele: implement this method
 
     @classmethod
     def construct_reply_packet(cls, message, shared_key, header):
-        pass
-    
+        """
+        Constructs a new replay SphinxPacket to be sent by the destination
+
+        :param message: the message to be sent as payload
+        :type message: bytes or str
+        :param shared_key: the key shared between destination and source
+        :type shared_key: bytes
+        :param header: the reply SphinxHeader
+        :type header: :class:`SphinxPacket`
+        """
+        pass #TODO/daniele: implement this method
+
+    @classmethod
+    def parse_bytes_to_packet(cls, raw, max_hops=DEFAULT_MAX_HOPS,
+              address_length=DEFAULT_ADDRESS_LENGTH,
+              group_elem_length=DEFAULT_GROUP_ELEM_LENGTH,
+              payload_length=DEFAULT_PAYLOAD_LENGTH):
+        """
+        Parses the raw data and creates a SphinxPacket.
+
+        :param raw: raw packet (in byte sequence)
+        :type raw: bytes
+        :param max_hops: maximum number of nodes on the path
+        :type max_hops: int
+        :param address_length: length of a node address (name)
+        :type max_hops: int
+        :param group_elem_length: length of a group element (for Diffie-Hellman)
+        :type max_hops: int
+        :param payload_length: length of the payload
+        :type max_hops: int
+        :returns: the newly-created SphinxPacket instance
+        :rtype: :class:`SphinxPacket`
+        """
+        assert isinstance(raw, bytes)
+        expected_header_length = compute_header_size(max_hops, address_length,
+                                                     group_elem_length)
+        if len(raw) != (expected_header_length + payload_length):
+            raise Exception() #TODO/Daniele: Create specific exception
+        raw_header = raw[0:expected_header_length]
+        header = SphinxHeader.parse_bytes_to_header(
+            raw_header,max_hops,address_length, group_elem_length)
+        payload = raw[expected_header_length:]
+        return SphinxPacket(header, payload)
+
+    def pack(self):
+        """
+        Return the packet as a byte sequence
+
+        :returns: raw packet (byte sequence)
+        :rtype: bytes
+        """
+        return self.header.pack() + self.payload
+
 
