@@ -91,6 +91,7 @@ class SphinxHeader(object):
             raise Exception() #TODO/Daniele: Create specific exception
         index_mac_0 = group_elem_length
         index_blinded_header = index_mac_0 + MAC_SIZE
+        
         dh_keyhalf_0 = raw[0:index_mac_0]
         mac_0 = raw[index_mac_0:index_blinded_header]
         blinded_header = raw[index_blinded_header:]
@@ -121,37 +122,6 @@ class SphinxPacket(object):
         assert isinstance(payload, bytes)
         self.header = header
         self.payload = payload
-
-    @classmethod
-    def construct_forward_packet(cls, message, shared_keys, header):
-        """
-        Constructs a new SphinxPacket to be sent by the source.
-        It first constructs the header, then onion-encrypts the payload.
-
-        :param message: the message to be sent as payload
-        :type message: bytes or str
-        :param shared_keys: List of keys shared with each node on the path
-        :type shared_keys: list
-        :param header: the reply SphinxHeader
-        :type header: :class:`SphinxPacket`
-        :returns: the newly-created SphinxPacket instance
-        :rtype: :class:`SphinxPacket`
-        """
-        pass #TODO/daniele: implement this method
-
-    @classmethod
-    def construct_reply_packet(cls, message, shared_key, header):
-        """
-        Constructs a new replay SphinxPacket to be sent by the destination
-
-        :param message: the message to be sent as payload
-        :type message: bytes or str
-        :param shared_key: the key shared between destination and source
-        :type shared_key: bytes
-        :param header: the reply SphinxHeader
-        :type header: :class:`SphinxPacket`
-        """
-        pass #TODO/daniele: implement this method
 
     @classmethod
     def parse_bytes_to_packet(cls, raw, max_hops=DEFAULT_MAX_HOPS,
