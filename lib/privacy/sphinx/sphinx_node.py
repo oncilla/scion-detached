@@ -19,8 +19,10 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
+#TODO/dasoni: add Sphinx reference
 from lib.privacy.sphinx.packet import SphinxPacket
-
+from lib.privacy.sphinx.packet import DEFAULT_MAX_HOPS,\
+    DEFAULT_ADDRESS_LENGTH, DEFAULT_GROUP_ELEM_LENGTH, DEFAULT_PAYLOAD_LENGTH
 
 class ProcessingResult(object):
     """
@@ -74,19 +76,29 @@ class ProcessingResult(object):
 
 class SphinxNode(object):
     """
-    A Sphinx mix node, able to process :class:`SphinxPacket`s.
-    A destination of such a packet is a SphinxNode as well.
+    A Sphinx mix node, able to process :class:`SphinxPacket`s..
 
     :ivar public_key: public key of the SphinxNode
     :vartype public_key: bytes
     :ivar private_key: private key of the SphinxNode
     :vartype private_key: bytes
+    :ivar max_hops: maximum number of nodes on the path
+    :vartype max_hops: int
+    :ivar address_length: length of a node address (name)
+    :vartype address_length: int
+    :ivar group_elem_length: length of a group element (for Diffie-Hellman)
+    :vartype group_elem_length: int
+    :ivar payload_length: length of the payload
+    :vartype payload_length: int
     """
 
-    def __init__(self, public_key, private_key, name=None):
+    def __init__(self, public_key, private_key):
         self.public_key = public_key
         self.private_key = private_key
-        self.name = name
+        self.max_hops=DEFAULT_MAX_HOPS
+        self.address_length=DEFAULT_ADDRESS_LENGTH
+        self.group_elem_length=DEFAULT_GROUP_ELEM_LENGTH
+        self.payload_length=DEFAULT_PAYLOAD_LENGTH
 
     def get_packet_processing_result(self, packet):
         """
@@ -108,10 +120,5 @@ class SphinxNode(object):
                 return ProcessingResult(ProcessingResult.ResultType.DROP)
         #TODO/Daniele: Finish this method
 
-    def process_packet(self, packet):
-        """
-        NOT IMPLEMENTED. Process a Sphinx packet. This function processes
-        a Sphinx packet, forwarding to the next node if necessary.
-        """
-        raise NotImplementedError("This method will not be implemented")
+
 

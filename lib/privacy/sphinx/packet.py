@@ -67,25 +67,6 @@ class SphinxHeader(object):
         self.first_hop = first_hop
 
     @classmethod
-    def construct_header(cls, shared_keys, next_hops, dh_keyhalf_0=None,
-                         max_hops=DEFAULT_MAX_HOPS):
-        """
-        Constructs a new SphinxHeader
-
-        :param shared_keys: List of keys shared with each node on the path
-        :type shared_keys: list
-        :param next_hops: list of node names (addresses) on the path
-        :type next_hops: list
-        :param dh_keyhalf_0: Diffie-Hellman key-half for the first node
-        :type dh_keyhalf_0: bytes
-        :param max_hops: maximum number of nodes on the path
-        :type max_hops: int
-        :returns: the newly-created SphinxHeader instance
-        :rtype: :class:`SphinxHeader`
-        """
-        pass #TODO/daniele: implement this method
-
-    @classmethod
     def parse_bytes_to_header(cls, raw, max_hops=DEFAULT_MAX_HOPS,
               address_length=DEFAULT_ADDRESS_LENGTH,
               group_elem_length=DEFAULT_GROUP_ELEM_LENGTH):
@@ -98,7 +79,7 @@ class SphinxHeader(object):
         :type max_hops: int
         :param address_length: length of a node's address/name
         :type address_length: int
-        :param group_elem_length: length of a group element (for Diffie-Hellman)
+        :param group_elem_length: length of a group element (for DH)
         :type group_elem_length: int
         :returns: the newly-created SphinxHeader instance
         :rtype: :class:`SphinxHeader`
@@ -136,6 +117,8 @@ class SphinxPacket(object):
     """
 
     def __init__(self, header, payload):
+        assert isinstance(header, SphinxHeader)
+        assert isinstance(payload, bytes)
         self.header = header
         self.payload = payload
 
@@ -183,11 +166,11 @@ class SphinxPacket(object):
         :param max_hops: maximum number of nodes on the path
         :type max_hops: int
         :param address_length: length of a node address (name)
-        :type max_hops: int
+        :type address_length: int
         :param group_elem_length: length of a group element (for Diffie-Hellman)
-        :type max_hops: int
+        :type group_elem_length: int
         :param payload_length: length of the payload
-        :type max_hops: int
+        :type payload_length: int
         :returns: the newly-created SphinxPacket instance
         :rtype: :class:`SphinxPacket`
         """
