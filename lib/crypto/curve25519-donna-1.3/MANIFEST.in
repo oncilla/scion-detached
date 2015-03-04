@@ -1,0 +1,8 @@
+
+# all sources referenced by setup.py are automatically included, which is
+# enough to build the python bindings, but leaves out a lot of other neat
+# stuff
+
+include MANIFEST.in LICENSE.md Makefile
+include contrib/*
+include *.c *.s *.podspec
