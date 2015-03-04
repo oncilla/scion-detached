@@ -1,8 +1,10 @@
 """
-:mod:`packet` --- Sphinx packet format
-======================================
+:mod:`sphinx_crypto_util` --- Cryptographic Utilities
+=====================================================
 
-This module defines the Sphinx packet format.
+This module defines a number of cryptographic utility functions
+needed by the Sphinx protocol.
+The functions defined here are just wrappers of library functions.
 
 Copyright 2014 ETH Zurich
 
@@ -21,6 +23,7 @@ limitations under the License.
 #TODO/dasoni: add Sphinx reference
 from hashlib import sha256
 from curve25519.keys import Private, Public
+from Crypto.Cipher import AES
 
 
 def derive_mac_key(shared_key):
@@ -46,6 +49,40 @@ def derive_prp_key(shared_key):
     """
     assert isinstance(shared_key, bytes)
     return sha256(b"sphinx-keyderivation-prp:"+shared_key).digest()
+
+def stream_cipher_encrypt(prg_key, plaintext):
+    """
+    Encrypt the given plaintext (byte sequence) using a stream cipher.
+
+    :param prg_key: the secret key for the encryption
+    :type prg_key: bytes
+    :param plaintext: the plaintext to encrypt (byte sequence)
+    :type plaintext: bytes
+    :returns: the encrypted plaintext, as byte sequence with the same length
+        as the plaintext.
+    :rtype: bytes
+    """
+    assert isinstance(prg_key, bytes)
+    assert isinstance(plaintext, bytes)
+    aes_instance = AES.new(prg_key, mode=AES.MODE_CTR)
+    return aes_instance.encrypt(plaintext)
+
+def stream_cipher_decrypt(prg_key, ciphertext):
+    """
+    Decrypt the given ciphertext (byte sequence) using a stream cipher.
+
+    :param prg_key: the secret key for the decryption
+    :type prg_key: bytes
+    :param ciphertext: the ciphertext to decrypt (byte sequence)
+    :type ciphertext: bytes
+    :returns: the decrypted ciphertext, a byte sequence with the same length
+        as the ciphertext.
+    :rtype: bytes
+    """
+    assert isinstance(prg_key, bytes)
+    assert isinstance(ciphertext, bytes)
+    aes_instance = AES.new(prg_key, mode=AES.MODE_CTR)
+    return aes_instance.decrypt(ciphertext)
 
 def blind_dh_key(dh_pubkey, shared_key):
     """

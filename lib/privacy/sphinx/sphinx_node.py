@@ -101,6 +101,12 @@ class SphinxNode(object):
         self.group_elem_length=DEFAULT_GROUP_ELEM_LENGTH
         self.payload_length=DEFAULT_PAYLOAD_LENGTH
 
+    def get_localhost_address(self):
+        """
+        Return the byte sequence representing the localhost address
+        """
+        return b"0" * self.address_length
+
     def get_packet_processing_result(self, packet):
         """
         Process a Sphinx packet and return a :class:`ProcessingResult` instance.

@@ -20,30 +20,41 @@ limitations under the License.
 """
 #TODO/dasoni: add Sphinx reference
 
-
-DEFAULT_MAX_HOPS = 8 # Default maximum number of hops on a path
+# Default maximum number of hops on a path, including the destination
+DEFAULT_MAX_HOPS = 8
 DEFAULT_ADDRESS_LENGTH = 16 # Default size of a node's address/name in bytes
 # Default size of a group element (for Diffie-Hellman) in bytes
 DEFAULT_GROUP_ELEM_LENGTH = 32
 DEFAULT_PAYLOAD_LENGTH = 512 # Default size of the payload in bytes
-MAC_SIZE = 16 # Size of a Messge Authentication Code in bytes
+MAC_SIZE = 16 # Size of a Message Authentication Code in bytes
 
+DEFAULT_LOCALHOST_ADDRESS = b"0" * DEFAULT_ADDRESS_LENGTH
+
+
+def compute_pernode_size(address_length=DEFAULT_ADDRESS_LENGTH):
+    """
+    Compute the size in bytes of the part of the header needed for each node.
+    """
+    return address_length + MAC_SIZE
+
+
+def compute_blinded_header_size(max_hops=DEFAULT_MAX_HOPS,
+              address_length=DEFAULT_ADDRESS_LENGTH):
+    """
+    Compute the size in bytes of the blinded header.
+    """
+    return compute_pernode_size(address_length) * max_hops
 
 def compute_header_size(max_hops=DEFAULT_MAX_HOPS,
               address_length=DEFAULT_ADDRESS_LENGTH,
               group_elem_length=DEFAULT_GROUP_ELEM_LENGTH):
     """
     Compute the size in bytes of a header.
-
-    :param max_hops: maximum number of nodes on the path
-    :type max_hops: int
-    :param address_length: length of a node's address/name
-    :type address_length: int
-    :param group_elem_length: length of a group element (for Diffie-Hellman)
-    :type group_elem_length: int
     """
-    blinded_header_length = (address_length + MAC_SIZE) * max_hops
-    return group_elem_length + MAC_SIZE + blinded_header_length
+    blinded_header_length = compute_blinded_header_size(max_hops,
+                                                        address_length)
+    return (group_elem_length + compute_pernode_size(address_length) +
+            blinded_header_length)
 
 
 class SphinxHeader(object):
