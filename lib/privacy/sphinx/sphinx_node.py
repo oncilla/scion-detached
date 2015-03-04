@@ -24,6 +24,7 @@ from lib.privacy.sphinx.packet import SphinxPacket
 from lib.privacy.sphinx.packet import DEFAULT_MAX_HOPS,\
     DEFAULT_ADDRESS_LENGTH, DEFAULT_GROUP_ELEM_LENGTH, DEFAULT_PAYLOAD_LENGTH
 
+
 class ProcessingResult(object):
     """
     Result of the processing of a :class:`SphinxPacket`
@@ -76,7 +77,7 @@ class ProcessingResult(object):
 
 class SphinxNode(object):
     """
-    A Sphinx mix node, able to process :class:`SphinxPacket`s..
+    A Sphinx mix node, able to process :class:`SphinxPacket`s.
 
     :ivar public_key: public key of the SphinxNode
     :vartype public_key: bytes

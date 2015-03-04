@@ -50,8 +50,8 @@ class SphinxHeader(object):
     """
     Header for a Sphinx packet
 
-    :ivar dh_keyhalf_0: Diffie-Hellman key-half for the first node
-    :vartype dh_keyhalf_0: bytes
+    :ivar dh_pubkey_0: Diffie-Hellman key-half for the first node
+    :vartype dh_pubkey_0: bytes
     :ivar mac_0: MAC for the first node
     :vartype mac_0: bytes
     :ivar blinded_header: Blinded header containing next hops and MACs
@@ -60,8 +60,8 @@ class SphinxHeader(object):
     :vartype first_hop: int
     """
 
-    def __init__(self, dh_keyhalf_0, mac_0, blinded_header, first_hop=None):
-        self.dh_keyhalf_0 = dh_keyhalf_0
+    def __init__(self, dh_pubkey_0, mac_0, blinded_header, first_hop=None):
+        self.dh_pubkey_0 = dh_pubkey_0
         self.mac_0 = mac_0
         self.blinded_header = blinded_header
         self.first_hop = first_hop
@@ -92,10 +92,10 @@ class SphinxHeader(object):
         index_mac_0 = group_elem_length
         index_blinded_header = index_mac_0 + MAC_SIZE
         
-        dh_keyhalf_0 = raw[0:index_mac_0]
+        dh_pubkey_0 = raw[0:index_mac_0]
         mac_0 = raw[index_mac_0:index_blinded_header]
         blinded_header = raw[index_blinded_header:]
-        return SphinxHeader(dh_keyhalf_0, mac_0, blinded_header)
+        return SphinxHeader(dh_pubkey_0, mac_0, blinded_header)
 
     def pack(self):
         """
@@ -104,7 +104,7 @@ class SphinxHeader(object):
         :returns: raw header (byte sequence)
         :rtype: bytes
         """
-        return self.dh_keyhalf_0 + self.mac_0 + self.blinded_header
+        return self.dh_pubkey_0 + self.mac_0 + self.blinded_header
 
 
 class SphinxPacket(object):

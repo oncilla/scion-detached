@@ -47,7 +47,7 @@ class SphinxEndHost(SphinxNode):
     def __init__(self, public_key, private_key):
         SphinxNode.__init__(self, public_key, private_key)
 
-    def construct_header(self, shared_keys, next_hops, dh_keyhalf_0=None):
+    def construct_header(self, shared_keys, next_hops, dh_pubkey_0=None):
         """
         Constructs a new SphinxHeader
 
@@ -55,8 +55,9 @@ class SphinxEndHost(SphinxNode):
         :type shared_keys: list
         :param next_hops: list of node names (addresses) on the path
         :type next_hops: list
-        :param dh_keyhalf_0: Diffie-Hellman key-half for the first node
-        :type dh_keyhalf_0: bytes
+        :param dh_pubkey_0: Diffie-Hellman public key (of the source)
+            for the first node
+        :type dh_pubkey_0: bytes
         :param max_hops: maximum number of nodes on the path
         :type max_hops: int
         :returns: the newly-created SphinxHeader instance
