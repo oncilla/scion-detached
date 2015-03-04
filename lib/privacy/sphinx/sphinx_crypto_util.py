@@ -34,13 +34,12 @@ def derive_mac_key(shared_key):
     assert isinstance(shared_key, bytes)
     return sha256(b"sphinx-keyderivation-mac:"+shared_key).digest()
 
-def derive_prg_key(shared_key):
+def derive_stream_key(shared_key):
     """
-    Derive the key for the PRG (Pseudo-Random Generator) from the
-    established shared key.
+    Derive the key for the stream cipher from the established shared key.
     """
     assert isinstance(shared_key, bytes)
-    return sha256(b"sphinx-keyderivation-prg:"+shared_key).digest()
+    return sha256(b"sphinx-keyderivation-stream:"+shared_key).digest()
 
 def derive_prp_key(shared_key):
     """

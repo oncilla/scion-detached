@@ -23,7 +23,8 @@ limitations under the License.
 from lib.privacy.sphinx.sphinx_node import SphinxNode
 from lib.privacy.sphinx.packet import compute_blinded_header_size,\
     compute_pernode_size
-from lib.privacy.sphinx.sphinx_crypto_util import stream_cipher_decrypt
+from lib.privacy.sphinx.sphinx_crypto_util import stream_cipher_decrypt,\
+    derive_stream_key, derive_mac_key, stream_cipher_encrypt
 import os
 
 
@@ -78,21 +79,31 @@ class SphinxEndHost(SphinxNode):
                                                           self.address_length)
         pernode_size = compute_pernode_size(self.address_length)
 
+        # Derive the necessary keys from the shared keys
+        stream_keys = [derive_stream_key(k) for k in shared_keys]
+        mac_keys = [derive_mac_key(k) for k in shared_keys]
+
         # Create filler string
-        tmp_filler = b"0" * blinded_header_size
-        for k in shared_keys:
+        tmp_filler = b"0" * (blinded_header_size + pernode_size)
+        for sk in stream_keys:
             tmp_filler = stream_cipher_decrypt(k, tmp_filler)
-        filler_length = pernode_size * (len(next_hops) - 1)
+        filler_length = pernode_size * len(next_hops)
         filler = tmp_filler[-filler_length:]
 
         # Create the blinded header by reversing the decryption steps done
         # at each hop by the nodes, starting by the destination's decryption
         # of the blinded header it will receive.
-        padding_length = (blinded_header_size - filler_length
+        stuffing_length = (blinded_header_size - filler_length
                           - self.address_length)
-        blinded_header = (self.get_localhost_address()
-                          + os.urandom(padding_length) + filler)
-        #TODO add for loop
+        padded_blinded_header = (self.get_localhost_address()
+                          + os.urandom(stuffing_length) + filler)
+        reversed_lists = zip(reversed(next_hops), reversed(stream_keys),
+                             reversed(mac_keys))
+        for address, stream_key, mac_key in reversed_lists:
+            padded_blinded_header = \
+                stream_cipher_encrypt(stream_key, padded_blinded_header)
+            blinded_header = padded_blinded_header[:-pernode_size]
+            #TODO add mac
         pass #TODO/daniele: implement this method
 
     def construct_forward_packet(self, message, shared_keys, header):
