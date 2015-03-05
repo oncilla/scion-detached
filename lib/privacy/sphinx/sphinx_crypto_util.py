@@ -21,9 +21,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 #TODO/dasoni: add Sphinx reference
-from hashlib import sha256
 from curve25519.keys import Private, Public
 from Crypto.Cipher import AES
+from hashlib import sha256
+import hmac
 
 
 def derive_mac_key(shared_key):
@@ -34,12 +35,14 @@ def derive_mac_key(shared_key):
     assert isinstance(shared_key, bytes)
     return sha256(b"sphinx-keyderivation-mac:"+shared_key).digest()
 
+
 def derive_stream_key(shared_key):
     """
     Derive the key for the stream cipher from the established shared key.
     """
     assert isinstance(shared_key, bytes)
     return sha256(b"sphinx-keyderivation-stream:"+shared_key).digest()
+
 
 def derive_prp_key(shared_key):
     """
@@ -48,6 +51,46 @@ def derive_prp_key(shared_key):
     """
     assert isinstance(shared_key, bytes)
     return sha256(b"sphinx-keyderivation-prp:"+shared_key).digest()
+
+
+def compute_mac(mac_key, msg):
+    """
+    Computes a 32 byte MAC (Message Authentication Code) over a message.
+
+    :param mac_key: the secret key for the MAC computation
+    :type mac_key: bytes
+    :param msg: the message over which the MAC is computed
+    :type msg: bytes or str
+    :returns: a 32 bytes MAC
+    :rtype: bytes
+    """
+    assert isinstance(mac_key, bytes)
+    digester = hmac.new(mac_key, msg, sha256)
+    return digester.digest()
+
+
+def verify_mac(mac_key, msg, mac):
+    """
+    Verifies that the MAC (Message Authentication Code) corresponds
+    to the input message.
+
+    :param mac_key: the secret key for the MAC computation
+    :type mac_key: bytes
+    :param msg: the message over which the MAC is computed, i.e. the integrity
+        of which needs to be verified
+    :type msg: bytes or str
+    :param mac: the MAC for the verification of the message
+    :type mac: bytes
+    :returns: Returns True if the verification succeeded, false otherwise
+    :rtype: bool
+    """
+    assert isinstance(mac_key, bytes)
+    assert isinstance(mac, bytes)
+    assert len(mac) == 32
+    digester = hmac.new(mac_key, msg, sha256)
+    recomputed_mac = digester.digest()
+    return hmac.compare_digest(mac, recomputed_mac)
+
 
 def stream_cipher_encrypt(prg_key, plaintext):
     """
@@ -66,6 +109,7 @@ def stream_cipher_encrypt(prg_key, plaintext):
     aes_instance = AES.new(prg_key, mode=AES.MODE_CTR)
     return aes_instance.encrypt(plaintext)
 
+
 def stream_cipher_decrypt(prg_key, ciphertext):
     """
     Decrypt the given ciphertext (byte sequence) using a stream cipher.
@@ -82,6 +126,7 @@ def stream_cipher_decrypt(prg_key, ciphertext):
     assert isinstance(ciphertext, bytes)
     aes_instance = AES.new(prg_key, mode=AES.MODE_CTR)
     return aes_instance.decrypt(ciphertext)
+
 
 def blind_dh_key(dh_pubkey, shared_key):
     """
