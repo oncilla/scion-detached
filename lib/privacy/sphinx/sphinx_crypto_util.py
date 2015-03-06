@@ -23,6 +23,7 @@ limitations under the License.
 #TODO/dasoni: add Sphinx reference
 from curve25519.keys import Private, Public
 from Crypto.Cipher import AES
+from Crypto.Util import Counter
 from hashlib import sha256
 import hmac
 
@@ -106,7 +107,8 @@ def stream_cipher_encrypt(prg_key, plaintext):
     """
     assert isinstance(prg_key, bytes)
     assert isinstance(plaintext, bytes)
-    aes_instance = AES.new(prg_key, mode=AES.MODE_CTR)
+    ctr = Counter.new(128)
+    aes_instance = AES.new(prg_key, mode=AES.MODE_CTR, counter=ctr)
     return aes_instance.encrypt(plaintext)
 
 
@@ -124,7 +126,8 @@ def stream_cipher_decrypt(prg_key, ciphertext):
     """
     assert isinstance(prg_key, bytes)
     assert isinstance(ciphertext, bytes)
-    aes_instance = AES.new(prg_key, mode=AES.MODE_CTR)
+    ctr = Counter.new(128)
+    aes_instance = AES.new(prg_key, mode=AES.MODE_CTR, counter=ctr)
     return aes_instance.decrypt(ciphertext)
 
 
