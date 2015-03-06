@@ -31,7 +31,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 from Crypto.Cipher import AES
-from hashlib import sha256
 
 
 BLOCK_SIZE = AES.block_size
@@ -48,24 +47,6 @@ def _xor(bytes_1, bytes_2, bytes_3=None):
                       for b1, b2, b3 in zip(bytes_1, bytes_2, bytes_3)])
     else:
         return bytes([b1 ^ b2 for b1, b2 in zip(bytes_1, bytes_2)])
-
-
-def _pad(msg, block_size=BLOCK_SIZE):
-    """
-    Pad the input message to a multiple of the block size (as done in PKCS#7)
-    """
-    assert isinstance(msg, bytes)
-    assert block_size < 256
-    pad_length = block_size - (len(msg) % block_size)
-    return msg + pad_length * bytes([pad_length])
-
-def _unpad(padded_msg):
-    """
-    Remove padding from the input message (as done in PKCS#7)
-    """
-    assert isinstance(padded_msg, bytes)
-    pad_length = int.from_bytes(padded_msg[-1:], byteorder='little')
-    return padded_msg[:-pad_length]
 
 
 def encrypt_with_aes_pcbc(key, msg, iv=ZEROED_IV):
@@ -111,7 +92,7 @@ def prp_encrypt(prp_key, msg):
     """
     assert isinstance(prp_key, bytes)
     assert isinstance(msg, bytes)
-    msg = _pad(msg)
+    assert len(msg) % BLOCK_SIZE == 0
     intermediate_ciphertext = bytes(
         reversed(encrypt_with_aes_pcbc(prp_key, msg)))
     return encrypt_with_aes_pcbc(prp_key, intermediate_ciphertext)
@@ -122,17 +103,21 @@ def prp_decrypt(prp_key, ciphertext):
     """
     assert isinstance(prp_key, bytes)
     assert isinstance(ciphertext, bytes)
+    assert len(ciphertext) % BLOCK_SIZE == 0
     intermediate_ciphertext = bytes(
         reversed(decrypt_with_aes_pcbc(prp_key, ciphertext)))
-    padded_msg = decrypt_with_aes_pcbc(prp_key, intermediate_ciphertext)
-    return _unpad(padded_msg)
+    return decrypt_with_aes_pcbc(prp_key, intermediate_ciphertext)
 
 
 def main():
     key = b'4' * 32
-    msg = b'ciaociaociaociaoL' * 3
-    ciphertxt = prp_encrypt(key, msg)
-    plaintext = prp_decrypt(key, ciphertxt)
+    msg = b'1234123412341234' * 40
+    ciphertext = prp_encrypt(key, msg)
+    plaintext = prp_decrypt(key, ciphertext)
+    assert plaintext == msg
+    # Try reversed, first decrypting and then encrypting
+    rev_ciphertext = prp_decrypt(key, msg)
+    plaintext = prp_encrypt(key, rev_ciphertext)
     assert plaintext == msg
 
 if __name__ == "__main__":

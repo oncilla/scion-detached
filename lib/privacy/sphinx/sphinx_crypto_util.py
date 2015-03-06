@@ -28,6 +28,27 @@ from hashlib import sha256
 import hmac
 
 
+BLOCK_SIZE = AES.block_size
+
+
+def pad(msg, block_size=BLOCK_SIZE):
+    """
+    Pad the input message to a multiple of the block size (as done in PKCS#7)
+    """
+    assert isinstance(msg, bytes)
+    assert block_size < 256
+    pad_length = block_size - (len(msg) % block_size)
+    return msg + pad_length * bytes([pad_length])
+
+def unpad(padded_msg):
+    """
+    Remove padding from the input message (as done in PKCS#7)
+    """
+    assert isinstance(padded_msg, bytes)
+    pad_length = int.from_bytes(padded_msg[-1:], byteorder='little')
+    return padded_msg[:-pad_length]
+
+
 def derive_mac_key(shared_key):
     """
     Derive the key for the MAC (Message Authentication Code) from the
