@@ -102,7 +102,7 @@ class SphinxHeader(object):
             raise Exception() #TODO/Daniele: Create specific exception
         index_mac_0 = group_elem_length
         index_blinded_header = index_mac_0 + MAC_SIZE
-        
+
         dh_pubkey_0 = raw[0:index_mac_0]
         mac_0 = raw[index_mac_0:index_blinded_header]
         blinded_header = raw[index_blinded_header:]

@@ -22,10 +22,12 @@ limitations under the License.
 #TODO/dasoni: add Sphinx reference
 from lib.privacy.sphinx.sphinx_node import SphinxNode
 from lib.privacy.sphinx.packet import compute_blinded_header_size,\
-    compute_pernode_size, SphinxHeader
+    compute_pernode_size, SphinxHeader, SphinxPacket
 from lib.privacy.sphinx.sphinx_crypto_util import stream_cipher_decrypt,\
-    derive_stream_key, derive_mac_key, stream_cipher_encrypt, compute_mac
+    derive_stream_key, derive_mac_key, stream_cipher_encrypt, compute_mac,\
+    derive_prp_key, pad
 import os
+from lib.crypto.prp import prp_encrypt
 
 
 class SphinxEndHost(SphinxNode):
@@ -52,7 +54,10 @@ class SphinxEndHost(SphinxNode):
     def __init__(self, public_key, private_key):
         SphinxNode.__init__(self, public_key, private_key)
 
-    def _compute_final_decrypted_header(self, stream_keys, number_of_hops):
+    def _construct_final_header(self, stream_keys, number_of_hops):
+        """
+        Construct the header as it will be decrypted by the destination.
+        """
         blinded_header_size = compute_blinded_header_size(self.max_hops,
                                                           self.address_length)
         pad_size = compute_pernode_size(self.address_length)
@@ -62,7 +67,7 @@ class SphinxEndHost(SphinxNode):
         for stream_key in stream_keys:
             long_filler = stream_cipher_decrypt(stream_key, long_filler)
         filler_length = pad_size * number_of_hops
-        filler =  long_filler[-filler_length:]
+        filler = long_filler[-filler_length:]
 
         # Create random pad: in the original Sphinx paper a zero-padding
         # is used instead, which leaks the path length to the destination
@@ -103,7 +108,7 @@ class SphinxEndHost(SphinxNode):
         # of the blinded header it will receive.
         pad_size = compute_pernode_size(self.address_length)
         decrypted_header = \
-            self._compute_final_decrypted_header(stream_keys, len(next_hops))
+            self._construct_final_header(stream_keys, len(next_hops))
         reversed_lists = zip(reversed(next_hops), reversed(stream_keys),
                              reversed(mac_keys))
         for address, stream_key, mac_key in reversed_lists:
@@ -124,7 +129,7 @@ class SphinxEndHost(SphinxNode):
         It first constructs the header, then onion-encrypts the payload.
 
         :param message: the message to be sent as payload
-        :type message: bytes or str
+        :type message: bytes
         :param shared_keys: List of keys shared with each node on the path
         :type shared_keys: list
         :param header: the reply SphinxHeader
@@ -132,7 +137,18 @@ class SphinxEndHost(SphinxNode):
         :returns: the newly-created SphinxPacket instance
         :rtype: :class:`SphinxPacket`
         """
-        pass #TODO/daniele: implement this method
+        assert isinstance(message, bytes)
+        for k in shared_keys:
+            assert isinstance(k, bytes)
+        assert isinstance(header, SphinxHeader)
+        # Since the padding requires at least one byte, the message should be
+        # strictly smaller (by at least one byte) than the payload length.
+        assert len(message) < self.payload_length
+        payload = pad(message, total_size=self.payload_length)
+        prp_keys = [derive_prp_key(k) for k in shared_keys]
+        for prp_key in reversed(prp_keys):
+            payload = prp_encrypt(prp_key, payload)
+        return SphinxPacket(header, payload)
 
     def construct_reply_packet(self, message, shared_key, header):
         """
@@ -145,5 +161,11 @@ class SphinxEndHost(SphinxNode):
         :param header: the reply SphinxHeader
         :type header: :class:`SphinxPacket`
         """
-        pass #TODO/daniele: implement this method
+        assert isinstance(message, bytes)
+        assert isinstance(shared_key, bytes)
+        assert isinstance(header, SphinxHeader)
+        payload = pad(message, total_size=self.payload_length)
+        prp_key = derive_prp_key(shared_key)
+        payload = prp_encrypt(prp_key, payload)
+        return SphinxPacket(header, payload)
 

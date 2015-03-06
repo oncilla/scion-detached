@@ -31,14 +31,19 @@ import hmac
 BLOCK_SIZE = AES.block_size
 
 
-def pad(msg, block_size=BLOCK_SIZE):
+def pad(msg, block_size=BLOCK_SIZE, total_size=None):
     """
     Pad the input message to a multiple of the block size (as done in PKCS#7)
+    and if total_size is not None also extend it to have length total_size
     """
     assert isinstance(msg, bytes)
-    assert block_size < 256
     pad_length = block_size - (len(msg) % block_size)
-    return msg + pad_length * bytes([pad_length])
+    padded_msg = msg + pad_length * bytes([pad_length])
+    if total_size is not None:
+        assert len(padded_msg) <= total_size
+        padded_msg = padded_msg + b'\0' * (total_size - len(padded_msg))
+    return padded_msg
+
 
 def unpad(padded_msg):
     """
