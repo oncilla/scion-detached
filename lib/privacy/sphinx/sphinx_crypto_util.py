@@ -29,29 +29,46 @@ import hmac
 
 
 BLOCK_SIZE = AES.block_size
+_PAD_START_BYTE = b'\xFF'
+_PAD_BYTE = b'\x00'
 
 
-def pad(msg, block_size=BLOCK_SIZE, total_size=None):
+def pad_to_block_multiple(msg, block_size=BLOCK_SIZE):
     """
     Pad the input message to a multiple of the block size (as done in PKCS#7)
-    and if total_size is not None also extend it to have length total_size
     """
     assert isinstance(msg, bytes)
     pad_length = block_size - (len(msg) % block_size)
-    padded_msg = msg + pad_length * bytes([pad_length])
-    if total_size is not None:
-        assert len(padded_msg) <= total_size
-        padded_msg = padded_msg + b'\0' * (total_size - len(padded_msg))
-    return padded_msg
+    return msg + pad_length * bytes([pad_length])
 
 
-def unpad(padded_msg):
+def remove_block_pad(padded_msg):
     """
-    Remove padding from the input message (as done in PKCS#7)
+    Remove padding to block size multiple from the input message (as done in
+    PKCS#7).
     """
     assert isinstance(padded_msg, bytes)
+    padded_msg = padded_msg.rstrip(b'\0')
+    assert len(padded_msg) > 0
     pad_length = int.from_bytes(padded_msg[-1:], byteorder='little')
     return padded_msg[:-pad_length]
+
+
+def pad_to_length(msg, final_length):
+    """
+    Pad the input message to the desired length. Since the padding requires
+    at least one byte to be appended to the message, the final_length needs to
+    be larger than the length of the message.
+    """
+    assert len(msg) < final_length # One byte at least needed for the padding
+    return msg + _PAD_START_BYTE + _PAD_BYTE * (final_length - len(msg))
+
+
+def remove_length_pad(msg):
+    """
+    Remove length padding added with :func:`pad_to_length`.
+    """
+    return msg.rstrip(_PAD_BYTE)[0:-1]
 
 
 def derive_mac_key(shared_key):
@@ -119,41 +136,41 @@ def verify_mac(mac_key, msg, mac):
     return hmac.compare_digest(mac, recomputed_mac)
 
 
-def stream_cipher_encrypt(prg_key, plaintext):
+def stream_cipher_encrypt(stream_key, plaintext):
     """
     Encrypt the given plaintext (byte sequence) using a stream cipher.
 
-    :param prg_key: the secret key for the encryption
-    :type prg_key: bytes
+    :param stream_key: the secret key for the encryption
+    :type stream_key: bytes
     :param plaintext: the plaintext to encrypt (byte sequence)
     :type plaintext: bytes
     :returns: the encrypted plaintext, as byte sequence with the same length
         as the plaintext.
     :rtype: bytes
     """
-    assert isinstance(prg_key, bytes)
+    assert isinstance(stream_key, bytes)
     assert isinstance(plaintext, bytes)
     ctr = Counter.new(128)
-    aes_instance = AES.new(prg_key, mode=AES.MODE_CTR, counter=ctr)
+    aes_instance = AES.new(stream_key, mode=AES.MODE_CTR, counter=ctr)
     return aes_instance.encrypt(plaintext)
 
 
-def stream_cipher_decrypt(prg_key, ciphertext):
+def stream_cipher_decrypt(stream_key, ciphertext):
     """
     Decrypt the given ciphertext (byte sequence) using a stream cipher.
 
-    :param prg_key: the secret key for the decryption
-    :type prg_key: bytes
+    :param stream_key: the secret key for the decryption
+    :type stream_key: bytes
     :param ciphertext: the ciphertext to decrypt (byte sequence)
     :type ciphertext: bytes
     :returns: the decrypted ciphertext, a byte sequence with the same length
         as the ciphertext.
     :rtype: bytes
     """
-    assert isinstance(prg_key, bytes)
+    assert isinstance(stream_key, bytes)
     assert isinstance(ciphertext, bytes)
     ctr = Counter.new(128)
-    aes_instance = AES.new(prg_key, mode=AES.MODE_CTR, counter=ctr)
+    aes_instance = AES.new(stream_key, mode=AES.MODE_CTR, counter=ctr)
     return aes_instance.decrypt(ciphertext)
 
 
@@ -178,3 +195,30 @@ def blind_dh_key(dh_pubkey, shared_key):
     blinded_dh_pubkey = blinding_factor.get_shared_public(Public(dh_pubkey))
     return blinded_dh_pubkey.serialize()
 
+
+def main():
+    m1 = b'1234'
+    m2 = b'1234\0\0\0\0'
+    assert remove_block_pad(pad_to_block_multiple(m1, 32)) == m1
+    assert remove_length_pad(pad_to_length(m1, 200)) == m1
+    assert remove_block_pad(pad_to_block_multiple(m2, 8)) == m2
+    assert remove_length_pad(pad_to_length(m2, 9)) == m2
+    assert remove_length_pad(remove_block_pad(
+        pad_to_block_multiple(pad_to_length(m1, 100), 32))) == m1
+
+    shared_key = b'5' * 32
+    mac_key = derive_mac_key(shared_key)
+    stream_key = derive_stream_key(shared_key)
+    prp_key = derive_stream_key(shared_key)
+    assert len(mac_key) == 32
+    assert len(stream_key) == 32
+    assert len(prp_key) == 32
+
+    msg = b'hellotoall' * 10
+    assert verify_mac(mac_key, msg, compute_mac(mac_key, msg))
+    assert stream_cipher_decrypt(stream_key,
+                                 stream_cipher_encrypt(stream_key, msg)) == msg
+
+
+if __name__ == "__main__":
+    main()

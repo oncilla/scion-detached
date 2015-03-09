@@ -25,9 +25,9 @@ from lib.privacy.sphinx.packet import compute_blinded_header_size,\
     compute_pernode_size, SphinxHeader, SphinxPacket
 from lib.privacy.sphinx.sphinx_crypto_util import stream_cipher_decrypt,\
     derive_stream_key, derive_mac_key, stream_cipher_encrypt, compute_mac,\
-    derive_prp_key, pad
+    derive_prp_key, pad_to_length
 import os
-from lib.crypto.prp import prp_encrypt
+from lib.crypto.prp import prp_encrypt, prp_decrypt
 
 
 class SphinxEndHost(SphinxNode):
@@ -51,8 +51,8 @@ class SphinxEndHost(SphinxNode):
     #TODO/Daniele: check whether it is correct to specify the instance
     #    attributes "inherited" from the superclass
 
-    def __init__(self, public_key, private_key):
-        SphinxNode.__init__(self, public_key, private_key)
+#     def __init__(self, public_key, private_key):
+#         SphinxNode.__init__(self, public_key, private_key)
 
     def _construct_final_header(self, stream_keys, number_of_hops):
         """
@@ -144,7 +144,7 @@ class SphinxEndHost(SphinxNode):
         # Since the padding requires at least one byte, the message should be
         # strictly smaller (by at least one byte) than the payload length.
         assert len(message) < self.payload_length
-        payload = pad(message, total_size=self.payload_length)
+        payload = pad_to_length(message, self.payload_length)
         prp_keys = [derive_prp_key(k) for k in shared_keys]
         for prp_key in reversed(prp_keys):
             payload = prp_encrypt(prp_key, payload)
@@ -164,8 +164,15 @@ class SphinxEndHost(SphinxNode):
         assert isinstance(message, bytes)
         assert isinstance(shared_key, bytes)
         assert isinstance(header, SphinxHeader)
-        payload = pad(message, total_size=self.payload_length)
+        payload = pad_to_length(message, self.payload_length)
         prp_key = derive_prp_key(shared_key)
         payload = prp_encrypt(prp_key, payload)
         return SphinxPacket(header, payload)
+
+
+def main():
+    pass
+
+if __name__ == "__main__":
+    main()
 
