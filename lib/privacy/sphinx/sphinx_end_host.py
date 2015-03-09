@@ -25,9 +25,9 @@ from lib.privacy.sphinx.packet import compute_blinded_header_size,\
     compute_pernode_size, SphinxHeader, SphinxPacket
 from lib.privacy.sphinx.sphinx_crypto_util import stream_cipher_decrypt,\
     derive_stream_key, derive_mac_key, stream_cipher_encrypt, compute_mac,\
-    derive_prp_key, pad_to_length
+    derive_prp_key, pad_to_length, pad_to_block_multiple
 import os
-from lib.crypto.prp import prp_encrypt, prp_decrypt
+from lib.crypto.prp import prp_encrypt, prp_decrypt, BLOCK_SIZE
 from curve25519.keys import Private
 
 
@@ -147,7 +147,8 @@ class SphinxEndHost(SphinxNode):
         # Since the padding requires at least one byte, the message should be
         # strictly smaller (by at least one byte) than the payload length.
         assert len(message) < self.payload_length
-        payload = pad_to_length(message, self.payload_length)
+        payload = pad_to_block_multiple(
+            pad_to_length(message, self.payload_length - 1), BLOCK_SIZE)
         prp_keys = [derive_prp_key(k) for k in shared_keys]
         for prp_key in reversed(prp_keys):
             payload = prp_encrypt(prp_key, payload)
@@ -167,7 +168,8 @@ class SphinxEndHost(SphinxNode):
         assert isinstance(message, bytes)
         assert isinstance(shared_key, bytes)
         assert isinstance(header, SphinxHeader)
-        payload = pad_to_length(message, self.payload_length)
+        payload = pad_to_block_multiple(
+            pad_to_length(message, self.payload_length), BLOCK_SIZE)
         prp_key = derive_prp_key(shared_key)
         payload = prp_encrypt(prp_key, payload)
         return SphinxPacket(header, payload)
@@ -183,6 +185,9 @@ def test():
     next_hops = [b'x'*16, b'y'*16, b'z'*16]
     header = end_host.construct_header_from_keys(shared_keys, dh_pubkey_0,
                                                  next_hops)
+
+    fwd_packet = end_host.construct_forward_packet(b'1234', shared_keys, header)
+    bwd_packet = end_host.construct_reply_packet(b'5678', shared_keys[-1], header)
 
 if __name__ == "__main__":
     test()
