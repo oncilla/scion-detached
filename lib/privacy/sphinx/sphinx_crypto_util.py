@@ -196,7 +196,7 @@ def blind_dh_key(dh_pubkey, shared_key):
     return blinded_dh_pubkey.serialize()
 
 
-def main():
+def test():
     m1 = b'1234'
     m2 = b'1234\0\0\0\0'
     assert remove_block_pad(pad_to_block_multiple(m1, 32)) == m1
@@ -216,9 +216,17 @@ def main():
 
     msg = b'hellotoall' * 10
     assert verify_mac(mac_key, msg, compute_mac(mac_key, msg))
-    assert stream_cipher_decrypt(stream_key,
-                                 stream_cipher_encrypt(stream_key, msg)) == msg
+    ciphertext = stream_cipher_encrypt(stream_key, msg)
+    assert stream_cipher_decrypt(stream_key, ciphertext) == msg
+    rev_ciphertext = stream_cipher_decrypt(stream_key, msg)
+    assert stream_cipher_encrypt(stream_key, rev_ciphertext) == msg
+    assert ciphertext == rev_ciphertext
+
+    mod_ciphertext = ciphertext[0:10] + b'0' + ciphertext[11:]
+    mod_msg = stream_cipher_decrypt(stream_key, mod_ciphertext)
+    assert mod_msg[0:10] == msg[0:10]
+    assert mod_msg[11:] == msg[11:]
 
 
 if __name__ == "__main__":
-    main()
+    test()
