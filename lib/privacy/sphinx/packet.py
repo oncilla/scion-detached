@@ -19,6 +19,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 #TODO/dasoni: add Sphinx reference
+from lib.privacy.sphinx.exception import PacketParsingException
 
 # Default maximum number of hops on a path, including the destination
 DEFAULT_MAX_HOPS = 8
@@ -99,7 +100,9 @@ class SphinxHeader(object):
         expected_length = compute_header_size(max_hops, address_length,
                                               group_elem_length)
         if len(raw) != expected_length:
-            raise Exception() #TODO/Daniele: Create specific exception
+            raise PacketParsingException("Header is expected to have length "
+                                         + str(expected_length)
+                                         + ", instead got " + str(len(raw)))
         index_mac_0 = group_elem_length
         index_blinded_header = index_mac_0 + MAC_SIZE
 
@@ -158,8 +161,11 @@ class SphinxPacket(object):
         assert isinstance(raw, bytes)
         expected_header_length = compute_header_size(max_hops, address_length,
                                                      group_elem_length)
-        if len(raw) != (expected_header_length + payload_length):
-            raise Exception() #TODO/Daniele: Create specific exception
+        expected_packet_length = expected_header_length + payload_length
+        if len(raw) != expected_packet_length:
+            raise PacketParsingException("Packet is expected to have length "
+                                         + str(expected_packet_length)
+                                         + ", instead got " + str(len(raw)))
         raw_header = raw[0:expected_header_length]
         header = SphinxHeader.parse_bytes_to_header(
             raw_header,max_hops,address_length, group_elem_length)
