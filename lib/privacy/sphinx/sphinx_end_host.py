@@ -28,6 +28,7 @@ from lib.privacy.sphinx.sphinx_crypto_util import stream_cipher_decrypt,\
     derive_prp_key, pad_to_length
 import os
 from lib.crypto.prp import prp_encrypt, prp_decrypt
+from curve25519.keys import Private
 
 
 class SphinxEndHost(SphinxNode):
@@ -61,17 +62,19 @@ class SphinxEndHost(SphinxNode):
         blinded_header_size = compute_blinded_header_size(self.max_hops,
                                                           self.address_length)
         pad_size = compute_pernode_size(self.address_length)
+        complete_header_size = blinded_header_size + pad_size
 
         # Create filler string
-        long_filler = b"0" * (blinded_header_size + pad_size)
+        long_filler = b'\0' * complete_header_size
         for stream_key in stream_keys:
+            long_filler = long_filler[pad_size:] + b'\0'*pad_size
             long_filler = stream_cipher_decrypt(stream_key, long_filler)
         filler_length = pad_size * number_of_hops
         filler = long_filler[-filler_length:]
 
         # Create random pad: in the original Sphinx paper a zero-padding
         # is used instead, which leaks the path length to the destination
-        random_pad = os.urandom(blinded_header_size - len(filler)
+        random_pad = os.urandom(complete_header_size - len(filler)
                                 - self.address_length)
         return self.get_localhost_address() + random_pad + filler
 
@@ -114,7 +117,7 @@ class SphinxEndHost(SphinxNode):
         for address, stream_key, mac_key in reversed_lists:
             padded_blinded_header = \
                 stream_cipher_encrypt(stream_key, decrypted_header)
-            assert padded_blinded_header[-pad_size:] == b"0" * pad_size
+            assert padded_blinded_header[-pad_size:] == b'\0' * pad_size
             blinded_header = padded_blinded_header[:-pad_size]
             mac = compute_mac(mac_key, blinded_header)
             decrypted_header = address + mac + blinded_header
@@ -170,9 +173,17 @@ class SphinxEndHost(SphinxNode):
         return SphinxPacket(header, payload)
 
 
-def main():
-    pass
+def test():
+    private = Private(b'8'*32)
+    public_key = private.get_public().serialize()
+    private_key = private.serialize()
+    end_host = SphinxEndHost(public_key, private_key)
+    shared_keys = [b'1'*32, b'2'*32, b'3'*32]
+    dh_pubkey_0 = b'a'*32
+    next_hops = [b'x'*16, b'y'*16, b'z'*16]
+    header = end_host.construct_header_from_keys(shared_keys, dh_pubkey_0,
+                                                 next_hops)
 
 if __name__ == "__main__":
-    main()
+    test()
 
