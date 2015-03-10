@@ -86,7 +86,7 @@ class SphinxNode(object):
     A Sphinx mix node, able to process :class:`SphinxPacket`s.
 
     :ivar private_key: private key of the SphinxNode
-    :vartype private_key: bytes
+    :vartype private_key: bytes or :class:`curve25519.keys.Private`
     :ivar public_key: public key of the SphinxNode
     :vartype public_key: bytes
     :ivar max_hops: maximum number of nodes on the path
@@ -99,19 +99,22 @@ class SphinxNode(object):
     :vartype payload_length: int
     """
 
-    def __init__(self, private_key, public_key):
+    def __init__(self, private_key, public_key=None):
         assert private_key is not None
-        assert isinstance(private_key, bytes)
-        assert public_key is not None
-        assert isinstance(public_key, bytes)
-        self.private = Private(raw=private_key)
-        self.public = private_key.get_public()
-        assert self.public.serialize() == public_key, ("the provided public "
-                "and private keys do not match")
-        self.max_hops=DEFAULT_MAX_HOPS
-        self.address_length=DEFAULT_ADDRESS_LENGTH
-        self.group_elem_length=DEFAULT_GROUP_ELEM_LENGTH
-        self.payload_length=DEFAULT_PAYLOAD_LENGTH
+        if not isinstance(private_key, Private):
+            assert isinstance(private_key, bytes)
+            self.private = Private(raw=private_key)
+        else:
+            self.private = private_key
+        self.public = self.private.get_public()
+        if public_key is not None:
+            assert isinstance(public_key, bytes)
+            assert self.public.serialize() == public_key, ("the provided "
+                "public and private keys do not match")
+        self.max_hops = DEFAULT_MAX_HOPS
+        self.address_length = DEFAULT_ADDRESS_LENGTH
+        self.group_elem_length = DEFAULT_GROUP_ELEM_LENGTH
+        self.payload_length = DEFAULT_PAYLOAD_LENGTH
 
     def get_localhost_address(self):
         """
@@ -121,7 +124,7 @@ class SphinxNode(object):
 
     def get_packet_processing_result(self, packet):
         """
-        Process a Sphinx packet and return a :class:`ProcessingResult` instance.
+        Process a Sphinx packet returning a :class:`ProcessingResult` instance.
 
         :param packet: a Sphinx packet (can be parsed or not)
         :type packet: bytes or :class:`SphinxPacket`

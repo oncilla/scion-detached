@@ -177,17 +177,15 @@ class SphinxEndHost(SphinxNode):
 
 def test():
     private = Private(b'8'*32)
-    public_key = private.get_public().serialize()
-    private_key = private.serialize()
-    end_host = SphinxEndHost(public_key, private_key)
+    end_host = SphinxEndHost(private)
     shared_keys = [b'1'*32, b'2'*32, b'3'*32]
     dh_pubkey_0 = b'a'*32
     next_hops = [b'x'*16, b'y'*16, b'z'*16]
     header = end_host.construct_header_from_keys(shared_keys, dh_pubkey_0,
                                                  next_hops)
 
-    fwd_packet = end_host.construct_forward_packet(b'1234', shared_keys, header)
-    bwd_packet = end_host.construct_reply_packet(b'5678', shared_keys[-1], header)
+    end_host.construct_forward_packet(b'1234', shared_keys, header)
+    end_host.construct_reply_packet(b'5678', shared_keys[-1], header)
 
 if __name__ == "__main__":
     test()
