@@ -27,7 +27,8 @@ from lib.privacy.sphinx.packet import DEFAULT_MAX_HOPS,\
 from lib.privacy.sphinx.exception import PacketParsingException
 from curve25519.keys import Private, Public
 from lib.privacy.sphinx.sphinx_crypto_util import verify_mac, derive_mac_key,\
-    derive_stream_key, stream_cipher_decrypt, blind_dh_key, derive_prp_key
+    derive_stream_key, stream_cipher_decrypt, blind_dh_key, derive_prp_key,\
+    get_secret_for_blinding
 from lib.crypto.prp import prp_decrypt
 
 
@@ -160,7 +161,9 @@ class SphinxNode(object):
         next_mac = decrypted_header[self.address_length:
                                     self.address_length+MAC_SIZE]
         next_blinded_header = decrypted_header[self.address_length+MAC_SIZE:]
-        next_dh_pubkey = blind_dh_key(header.dh_pubkey_0, shared_key)
+        secret_for_blinding = get_secret_for_blinding(header.dh_pubkey_0,
+                                                      shared_key)
+        next_dh_pubkey = blind_dh_key(header.dh_pubkey_0, secret_for_blinding)
         next_header = SphinxHeader(next_dh_pubkey, next_mac,
                                    next_blinded_header, next_hop)
         # Construct the next packet

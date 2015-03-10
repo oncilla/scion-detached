@@ -174,25 +174,34 @@ def stream_cipher_decrypt(stream_key, ciphertext):
     return aes_instance.decrypt(ciphertext)
 
 
-def blind_dh_key(dh_pubkey, shared_key):
+def get_secret_for_blinding(dh_pubkey, shared_key):
     """
-    Derive the DH public key half (of the source) for the next hop
-    based on the current public key and the established shared key.
+    Compute the secret needed for the blinding (see :func:`blind_dh_key`).
+    This is not the blinding factor as in the Sphinx paper, which instead will
+    be computed by the :func:`blind_dh_key` function.
     """
-    assert isinstance(dh_pubkey, bytes)
-    assert len(dh_pubkey) == 32
-    assert isinstance(shared_key, bytes)
+    return sha256(b"sphinx-blinding-factor:" + dh_pubkey + shared_key).digest()
+
+
+def blind_dh_key(dh_pubkey, secret_for_blinding):
+    """
+    Blind a DH key dh_pubkey (of the form g^x) by raising it to the blinding
+    factor b, an exponent computed based on the secret_for_blinding
+    """
+    if isinstance(dh_pubkey, bytes):
+        assert len(dh_pubkey) == 32
+        dh_pubkey = Public(dh_pubkey)
+    assert isinstance(secret_for_blinding, bytes)
+    assert len(secret_for_blinding) == 32
     # The following is a hack to reuse the python wrapper
     # of the curve25519-donna library to generate an element in Z_q^*.
-    # First a secret is created hashing dh_pubkey and share_key, but unlike
-    # in the Sphinx paper, this hash will not be an element of Z_q^*, just a
-    # random byte sequence. This is used to generate a "fake" DH private key,
+    # The input secret_for_blinding should be computed through a hash function,
+    # so in general it will not be an element of Z_q^*, just a random byte
+    # sequence. This is used to generate a "fake" DH private key,
     # which represents the actual blinding factor. Blinding the dh_pubkey is
     # equivalent to computing a shared secret (which is another group element).
-    secret_for_blind_factor = sha256(b"sphinx-blinding-factor:"
-                                     + dh_pubkey + shared_key).digest()
-    blinding_factor = Private(secret=secret_for_blind_factor)
-    blinded_dh_pubkey = blinding_factor.get_shared_public(Public(dh_pubkey))
+    blinding_factor = Private(secret=secret_for_blinding)
+    blinded_dh_pubkey = blinding_factor.get_shared_public(dh_pubkey)
     return blinded_dh_pubkey.serialize()
 
 
