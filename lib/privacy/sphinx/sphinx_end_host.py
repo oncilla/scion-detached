@@ -25,10 +25,36 @@ from lib.privacy.sphinx.packet import compute_blinded_header_size,\
     compute_pernode_size, SphinxHeader, SphinxPacket
 from lib.privacy.sphinx.sphinx_crypto_util import stream_cipher_decrypt,\
     derive_stream_key, derive_mac_key, stream_cipher_encrypt, compute_mac,\
-    derive_prp_key, pad_to_length, pad_to_block_multiple
+    derive_prp_key, pad_to_length, pad_to_block_multiple,\
+    get_secret_for_blinding, blind_dh_key, remove_block_pad, remove_length_pad
 import os
-from lib.crypto.prp import prp_encrypt, prp_decrypt, BLOCK_SIZE
-from curve25519.keys import Private
+from lib.crypto.prp import prp_encrypt, BLOCK_SIZE
+from curve25519.keys import Private, Public
+import curve25519.keys
+
+
+def compute_shared_keys(source_private, nodes_pubkeys):
+    """
+    Compute the shared keys between the source, whose temporary private key
+    is given as input, and the nodes the public keys of which are in the
+    list nodes_pubkeys.
+    """
+    shared_keys = [source_private.get_shared_key(nodes_pubkeys[0])]
+    source_pubkey = source_private.get_public()
+    secrets_for_blinding = [get_secret_for_blinding(source_pubkey.serialize(),
+                                                    shared_keys[0])]
+    for node_pubkey in nodes_pubkeys[1:]:
+        if not isinstance(node_pubkey, Public):
+            node_pubkey = Public(node_pubkey)
+        source_pubkey = blind_dh_key(source_pubkey, secrets_for_blinding[-1])
+        tmp_pubkey = source_private.get_shared_public(node_pubkey)
+        for blinding_secret in secrets_for_blinding:
+            tmp_pubkey = blind_dh_key(tmp_pubkey, blinding_secret)
+        shared_key = curve25519.keys._hash_shared(tmp_pubkey)
+        shared_keys.append(shared_key)
+        secrets_for_blinding.append(get_secret_for_blinding(source_pubkey,
+                                                            shared_key))
+    return shared_keys
 
 
 class SphinxEndHost(SphinxNode):
@@ -36,10 +62,14 @@ class SphinxEndHost(SphinxNode):
     A Sphinx end host (source or destination), which can create new Sphinx
     packets, reply headers and reply packets from reply headers.
 
-    :ivar public_key: public key of the SphinxNode
+    :ivar private_key: private key of the SphinxEndHost. In case of the source
+        this value is not used, so it should be set to the temporary private
+        key being used for the packet that is being sent.
+    :vartype private_key: bytes or :class:`curve25519.keys.Private`
+    :ivar public_key: public key of the SphinxEndHost. In case of the source
+        this value is not used, so it should be set to the temporary public
+        key being used for the packet that is being sent.
     :vartype public_key: bytes
-    :ivar private_key: private key of the SphinxNode
-    :vartype private_key: bytes
     :ivar max_hops: maximum number of nodes on the path
     :vartype max_hops: int
     :ivar address_length: length of a node address (name)
@@ -52,8 +82,8 @@ class SphinxEndHost(SphinxNode):
     #TODO/Daniele: check whether it is correct to specify the instance
     #    attributes "inherited" from the superclass
 
-#     def __init__(self, public_key, private_key):
-#         SphinxNode.__init__(self, public_key, private_key)
+    def __init__(self, private_key, public_key=None):
+        SphinxNode.__init__(self, private_key, public_key)
 
     def _construct_final_header(self, stream_keys, number_of_hops):
         """
@@ -144,9 +174,9 @@ class SphinxEndHost(SphinxNode):
         for k in shared_keys:
             assert isinstance(k, bytes)
         assert isinstance(header, SphinxHeader)
-        # Since the padding requires at least one byte, the message should be
-        # strictly smaller (by at least one byte) than the payload length.
-        assert len(message) < self.payload_length
+        # Since the padding requires at least two bytes, the message should be
+        # strictly smaller (by at least two bytes) than the payload length.
+        assert len(message) < self.payload_length-1
         payload = pad_to_block_multiple(
             pad_to_length(message, self.payload_length - 1), BLOCK_SIZE)
         prp_keys = [derive_prp_key(k) for k in shared_keys]
@@ -174,9 +204,16 @@ class SphinxEndHost(SphinxNode):
         payload = prp_encrypt(prp_key, payload)
         return SphinxPacket(header, payload)
 
+    @staticmethod
+    def get_message_from_payload(payload):
+        """
+        Obtain original message from decrypted payload (removes padding)
+        """
+        return remove_length_pad(remove_block_pad(payload))
+
 
 def test():
-    private = Private(b'8'*32)
+    private = Private()
     end_host = SphinxEndHost(private)
     shared_keys = [b'1'*32, b'2'*32, b'3'*32]
     dh_pubkey_0 = b'a'*32
@@ -187,6 +224,49 @@ def test():
     end_host.construct_forward_packet(b'1234', shared_keys, header)
     end_host.construct_reply_packet(b'5678', shared_keys[-1], header)
 
+
+def test_routing():
+    source_private = Private()
+    node_1_private = Private()
+    node_2_private = Private()
+    node_3_private = Private()
+
+    source = SphinxEndHost(source_private)
+    node_1 = SphinxNode(node_1_private)
+    node_2 = SphinxNode(node_2_private)
+    node_3 = SphinxEndHost(node_3_private)
+
+    nodes_privates = [node_1_private, node_2_private, node_3_private]
+    nodes_pubkeys = [p.get_public() for p in nodes_privates]
+    shared_keys = compute_shared_keys(source_private, nodes_pubkeys)
+
+    source_pubkey = source_private.get_public()
+    next_hops = [b'1'*16, b'2'*16, b'3'*16]
+    message = b"Test Message"
+    header = source.construct_header_from_keys(shared_keys,
+                                               source_pubkey.serialize(),
+                                               next_hops)
+    packet = source.construct_forward_packet(message, shared_keys, header)
+    raw_packet = packet.pack()
+
+    # Node 1
+    result = node_1.get_packet_processing_result(raw_packet)
+    assert result.is_to_forward()
+    assert result.result[0] == next_hops[1]
+    raw_packet = result.result[1].pack()
+
+    # Node 2
+    result = node_2.get_packet_processing_result(raw_packet)
+    assert result.is_to_forward()
+    assert result.result[0] == next_hops[2]
+    raw_packet = result.result[1].pack()
+
+    # Node 3 - Destination
+    result = node_3.get_packet_processing_result(raw_packet)
+    assert result.is_at_destination()
+    assert node_3.get_message_from_payload(result.result) == message
+
 if __name__ == "__main__":
     test()
+    test_routing()
 

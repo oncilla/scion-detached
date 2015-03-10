@@ -61,7 +61,7 @@ def pad_to_length(msg, final_length):
     be larger than the length of the message.
     """
     assert len(msg) < final_length # One byte at least needed for the padding
-    return msg + _PAD_START_BYTE + _PAD_BYTE * (final_length - len(msg))
+    return msg + _PAD_START_BYTE + _PAD_BYTE * (final_length - len(msg) - 1)
 
 
 def remove_length_pad(msg):
