@@ -20,9 +20,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 #TODO/dasoni: add Sphinx reference
-from lib.privacy.sphinx.packet import SphinxPacket
+from lib.privacy.sphinx.packet import SphinxPacket, MAC_SIZE,\
+    compute_pernode_size, SphinxHeader
 from lib.privacy.sphinx.packet import DEFAULT_MAX_HOPS,\
     DEFAULT_ADDRESS_LENGTH, DEFAULT_GROUP_ELEM_LENGTH, DEFAULT_PAYLOAD_LENGTH
+from lib.privacy.sphinx.exception import PacketParsingException
+from curve25519.keys import Private, Public
+from lib.privacy.sphinx.sphinx_crypto_util import verify_mac, derive_mac_key,\
+    derive_stream_key, stream_cipher_decrypt, blind_dh_key, derive_prp_key
+from lib.crypto.prp import prp_decrypt
 
 
 class ProcessingResult(object):
@@ -79,10 +85,10 @@ class SphinxNode(object):
     """
     A Sphinx mix node, able to process :class:`SphinxPacket`s.
 
-    :ivar public_key: public key of the SphinxNode
-    :vartype public_key: bytes
     :ivar private_key: private key of the SphinxNode
     :vartype private_key: bytes
+    :ivar public_key: public key of the SphinxNode
+    :vartype public_key: bytes
     :ivar max_hops: maximum number of nodes on the path
     :vartype max_hops: int
     :ivar address_length: length of a node address (name)
@@ -93,9 +99,15 @@ class SphinxNode(object):
     :vartype payload_length: int
     """
 
-    def __init__(self, public_key, private_key):
-        self.public_key = public_key
-        self.private_key = private_key
+    def __init__(self, private_key, public_key):
+        assert private_key is not None
+        assert isinstance(private_key, bytes)
+        assert public_key is not None
+        assert isinstance(public_key, bytes)
+        self.private = Private(raw=private_key)
+        self.public = private_key.get_public()
+        assert self.public.serialize() == public_key, ("the provided public "
+                "and private keys do not match")
         self.max_hops=DEFAULT_MAX_HOPS
         self.address_length=DEFAULT_ADDRESS_LENGTH
         self.group_elem_length=DEFAULT_GROUP_ELEM_LENGTH
@@ -123,9 +135,33 @@ class SphinxNode(object):
             #    for different packet lengths
             try:
                 packet = SphinxPacket.parse_bytes_to_packet(packet)
-            except Exception:
+            except PacketParsingException:
                 return ProcessingResult(ProcessingResult.ResultType.DROP)
-        #TODO/Daniele: Finish this method
+        header = packet.header
+        shared_key = self.private.get_shared_key(Public(header.dh_pubkey_0))
+        if not verify_mac(derive_mac_key(shared_key), header.blinded_header,
+                          header.mac_0):
+            return ProcessingResult(ProcessingResult.ResultType.DROP)
 
-
+        pad_size = compute_pernode_size(self.address_length)
+        stream_key = derive_stream_key(shared_key)
+        padded_blinded_header = header.blinded_header + b'\0'*pad_size
+        decrypted_header = stream_cipher_decrypt(stream_key,
+                                                 padded_blinded_header)
+        payload = prp_decrypt(derive_prp_key(shared_key), packet.payload)
+        next_hop = decrypted_header[:self.address_length]
+        if next_hop == self.get_localhost_address():
+            return ProcessingResult(ProcessingResult.ResultType.AT_DESTINATION,
+                                    payload)
+        # Construct the next header
+        next_mac = decrypted_header[self.address_length:
+                                    self.address_length+MAC_SIZE]
+        next_blinded_header = decrypted_header[self.address_length+MAC_SIZE:]
+        next_dh_pubkey = blind_dh_key(header.dh_pubkey_0, shared_key)
+        next_header = SphinxHeader(next_dh_pubkey, next_mac,
+                                   next_blinded_header, next_hop)
+        # Construct the next packet
+        next_packet = SphinxPacket(next_header, payload)
+        return ProcessingResult(ProcessingResult.ResultType.FORWARD,
+                                (next_hop, next_packet))
 
