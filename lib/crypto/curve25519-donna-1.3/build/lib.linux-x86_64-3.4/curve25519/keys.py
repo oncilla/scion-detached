@@ -25,7 +25,7 @@ class Private:
         else:
             assert isinstance(raw, bytes), "raw must be a byte sequence"
             assert seed is None and secret is None
-            private = raw
+            self.private = raw
 
     def serialize(self):
         return self.private
