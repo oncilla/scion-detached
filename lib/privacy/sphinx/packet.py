@@ -54,8 +54,7 @@ def compute_header_size(max_hops=DEFAULT_MAX_HOPS,
     """
     blinded_header_length = compute_blinded_header_size(max_hops,
                                                         address_length)
-    return (group_elem_length + compute_pernode_size(address_length) +
-            blinded_header_length)
+    return group_elem_length + MAC_SIZE + blinded_header_length
 
 
 class SphinxHeader(object):
@@ -181,4 +180,25 @@ class SphinxPacket(object):
         """
         return self.header.pack() + self.payload
 
+
+def test():
+    dh_pubkey_0 = b'1'*DEFAULT_GROUP_ELEM_LENGTH
+    mac_0 = b'2'*MAC_SIZE
+    blinded_header = b'3'*compute_blinded_header_size()
+    first_hop = b'4'*DEFAULT_ADDRESS_LENGTH
+    payload = b'5'*DEFAULT_PAYLOAD_LENGTH
+
+    header = SphinxHeader(dh_pubkey_0, mac_0, blinded_header, first_hop)
+    packet = SphinxPacket(header, payload)
+    raw_packet = packet.pack()
+
+    parsed_packet = SphinxPacket.parse_bytes_to_packet(raw_packet)
+    assert parsed_packet.header.dh_pubkey_0 == dh_pubkey_0
+    assert parsed_packet.header.mac_0 == mac_0
+    assert parsed_packet.header.blinded_header == blinded_header
+    assert parsed_packet.payload == payload
+
+
+if __name__ == "__main__":
+    test()
 
