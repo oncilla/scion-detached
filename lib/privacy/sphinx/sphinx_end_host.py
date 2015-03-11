@@ -63,8 +63,8 @@ def compute_shared_keys(source_private, nodes_pubkeys):
 
 class SphinxEndHost(SphinxNode):
     """
-    A Sphinx end host (source or destination), which can create new Sphinx
-    packets, reply headers and reply packets from reply headers.
+    A Sphinx end host (source), which can create new Sphinx packets, reply
+    headers and reply packets from reply headers.
 
     :ivar private_key: private key of the SphinxEndHost. In case of the source
         this value is not used, so it should be set to the temporary private
@@ -240,29 +240,6 @@ class SphinxEndHost(SphinxNode):
         prp_keys = [derive_prp_key(k) for k in shared_keys]
         for prp_key in reversed(prp_keys):
             payload = prp_encrypt(prp_key, payload)
-        return SphinxPacket(header, payload)
-
-    def construct_reply_packet(self, message, shared_key, header):
-        """
-        Constructs a new replay SphinxPacket to be sent by the destination
-
-        :param message: the message to be sent as payload
-        :type message: bytes or str
-        :param shared_key: the key shared between destination and source
-        :type shared_key: bytes
-        :param header: the reply SphinxHeader
-        :type header: :class:`SphinxPacket`
-        """
-        assert isinstance(message, bytes)
-        assert isinstance(shared_key, bytes)
-        assert isinstance(header, SphinxHeader)
-        # Since the padding requires at least two bytes, the message should be
-        # strictly smaller (by at least two bytes) than the payload length.
-        assert len(message) < self.payload_length-1
-        payload = pad_to_block_multiple(
-            pad_to_length(message, self.payload_length - 1), BLOCK_SIZE)
-        prp_key = derive_prp_key(shared_key)
-        payload = prp_encrypt(prp_key, payload)
         return SphinxPacket(header, payload)
 
     def process_incoming_reply(self, packet, allow_reuse=False):

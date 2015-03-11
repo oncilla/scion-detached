@@ -28,8 +28,8 @@ from lib.privacy.sphinx.exception import PacketParsingException
 from curve25519.keys import Private, Public
 from lib.privacy.sphinx.sphinx_crypto_util import verify_mac, derive_mac_key,\
     derive_stream_key, stream_cipher_decrypt, blind_dh_key, derive_prp_key,\
-    get_secret_for_blinding
-from lib.crypto.prp import prp_decrypt
+    get_secret_for_blinding, BLOCK_SIZE, pad_to_block_multiple, pad_to_length
+from lib.crypto.prp import prp_decrypt, prp_encrypt
 
 
 class ProcessingResult(object):
@@ -168,4 +168,27 @@ class SphinxNode(object):
         next_packet = SphinxPacket(next_header, payload)
         return ProcessingResult(ProcessingResult.ResultType.FORWARD,
                                 (next_hop, next_packet))
+
+    def construct_reply_packet(self, message, shared_key, header):
+        """
+        Constructs a new replay SphinxPacket to be sent by the destination
+
+        :param message: the message to be sent as payload
+        :type message: bytes or str
+        :param shared_key: the key shared between destination and source
+        :type shared_key: bytes
+        :param header: the reply SphinxHeader
+        :type header: :class:`SphinxPacket`
+        """
+        assert isinstance(message, bytes)
+        assert isinstance(shared_key, bytes)
+        assert isinstance(header, SphinxHeader)
+        # Since the padding requires at least two bytes, the message should be
+        # strictly smaller (by at least two bytes) than the payload length.
+        assert len(message) < self.payload_length-1
+        payload = pad_to_block_multiple(
+            pad_to_length(message, self.payload_length - 1), BLOCK_SIZE)
+        prp_key = derive_prp_key(shared_key)
+        payload = prp_encrypt(prp_key, payload)
+        return SphinxPacket(header, payload)
 
