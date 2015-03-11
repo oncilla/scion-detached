@@ -104,10 +104,10 @@ class SphinxNode(object):
         assert private_key is not None
         if not isinstance(private_key, Private):
             assert isinstance(private_key, bytes)
-            self.private = Private(raw=private_key)
+            self._private = Private(raw=private_key)
         else:
-            self.private = private_key
-        self.public = self.private.get_public()
+            self._private = private_key
+        self._public = self._private.get_public()
         if public_key is not None:
             assert isinstance(public_key, bytes)
             assert self.public.serialize() == public_key, ("the provided "
@@ -116,6 +116,41 @@ class SphinxNode(object):
         self.address_length = DEFAULT_ADDRESS_LENGTH
         self.group_elem_length = DEFAULT_GROUP_ELEM_LENGTH
         self.payload_length = DEFAULT_PAYLOAD_LENGTH
+
+    @property
+    def private(self):
+        """
+        Getter for private property
+        """
+        return self._private
+
+    @private.setter
+    def private(self, new_private):
+        """
+        Setter for private property
+        """
+        assert new_private is not None
+        if not isinstance(new_private, Private):
+            assert isinstance(new_private, bytes)
+            self._private = Private(raw=new_private)
+        else:
+            self._private = new_private
+        self._public = self._private.get_public()
+
+    @property
+    def public(self):
+        """
+        Getter for public property
+        """
+        return self._public
+
+    @public.setter
+    def public(self):
+        """
+        Setter for public property (setting not allowed).
+        """
+        raise TypeError("Cannot assign directly to public property, "
+                        "assing to private property instead")
 
     def get_localhost_address(self):
         """
@@ -140,7 +175,11 @@ class SphinxNode(object):
             except PacketParsingException:
                 return ProcessingResult(ProcessingResult.ResultType.DROP)
         header = packet.header
-        shared_key = self.private.get_shared_key(Public(header.dh_pubkey_0))
+        if not isinstance(self.private, Private):
+            private = Private(raw=self.private)
+        else:
+            private = self.private
+        shared_key = private.get_shared_key(Public(header.dh_pubkey_0))
         if not verify_mac(derive_mac_key(shared_key), header.blinded_header,
                           header.mac_0):
             return ProcessingResult(ProcessingResult.ResultType.DROP)
@@ -191,4 +230,14 @@ class SphinxNode(object):
         prp_key = derive_prp_key(shared_key)
         payload = prp_encrypt(prp_key, payload)
         return SphinxPacket(header, payload)
+
+
+def test():
+    private = Private()
+    node = SphinxNode(private)
+    node.private = b'1'*32
+    
+
+if __name__ == '__main__':
+    test()
 
