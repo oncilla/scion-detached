@@ -20,24 +20,28 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 #TODO/dasoni: add Sphinx reference
-from lib.privacy.sphinx.sphinx_node import SphinxNode
+from lib.privacy.sphinx.sphinx_node import SphinxNode, ProcessingResult
 from lib.privacy.sphinx.packet import compute_blinded_header_size,\
     compute_pernode_size, SphinxHeader, SphinxPacket
 from lib.privacy.sphinx.sphinx_crypto_util import stream_cipher_decrypt,\
     derive_stream_key, derive_mac_key, stream_cipher_encrypt, compute_mac,\
     derive_prp_key, pad_to_length, pad_to_block_multiple,\
-    get_secret_for_blinding, blind_dh_key, remove_block_pad, remove_length_pad
+    get_secret_for_blinding, blind_dh_key, remove_block_pad, remove_length_pad,\
+    verify_mac
 import os
-from lib.crypto.prp import prp_encrypt, BLOCK_SIZE
+from lib.crypto.prp import prp_encrypt, BLOCK_SIZE, prp_decrypt
 from curve25519.keys import Private, Public
 import curve25519.keys
+from lib.privacy.sphinx.exception import PacketParsingException
 
 
 def compute_shared_keys(source_private, nodes_pubkeys):
     """
     Compute the shared keys between the source, whose temporary private key
     is given as input, and the nodes the public keys of which are in the
-    list nodes_pubkeys.
+    list nodes_pubkeys. This function also returns the last DH public key
+    as it is received by the last hop: this is useful in reply packets so that
+    the source may recognize a reply without having do a DH handshake.
     """
     shared_keys = [source_private.get_shared_key(nodes_pubkeys[0])]
     source_pubkey = source_private.get_public()
@@ -46,15 +50,15 @@ def compute_shared_keys(source_private, nodes_pubkeys):
     for node_pubkey in nodes_pubkeys[1:]:
         if not isinstance(node_pubkey, Public):
             node_pubkey = Public(node_pubkey)
-        source_pubkey = blind_dh_key(source_pubkey, secrets_for_blinding[-1])
         tmp_pubkey = source_private.get_shared_public(node_pubkey)
         for blinding_secret in secrets_for_blinding:
             tmp_pubkey = blind_dh_key(tmp_pubkey, blinding_secret)
         shared_key = curve25519.keys._hash_shared(tmp_pubkey)
         shared_keys.append(shared_key)
+        source_pubkey = blind_dh_key(source_pubkey, secrets_for_blinding[-1])
         secrets_for_blinding.append(get_secret_for_blinding(source_pubkey,
                                                             shared_key))
-    return shared_keys
+    return shared_keys, source_pubkey
 
 
 class SphinxEndHost(SphinxNode):
@@ -78,14 +82,51 @@ class SphinxEndHost(SphinxNode):
     :vartype group_elem_length: int
     :ivar payload_length: length of the payload
     :vartype payload_length: int
+    :ivar expected_replies: dictionary containing as keys the dh public keys
+        corresponding to reply headers created, and as value for each key a
+        tuple of the form (shared_keys, destination_shared_key), where
+        shared_keys is the list of shared keys with all nodes on the backward
+        path (the last key is just a secrect key known only to the source),
+        and destination_shared_key is the key shared between the source and
+        the destination (the sender of the packet).
+    :vartype expected_replies: dict
     """
     #TODO/Daniele: check whether it is correct to specify the instance
     #    attributes "inherited" from the superclass
 
     def __init__(self, private_key, public_key=None):
         SphinxNode.__init__(self, private_key, public_key)
+        self.expected_replies = dict()
 
-    def _construct_final_header(self, stream_keys, number_of_hops):
+    def add_expected_reply(self, dh_pubkey, shared_keys,
+                           destination_shared_key):
+        """
+        Add an entry to the expected_replies dictionary to be able to correctly
+        process the replies when they arrive.
+
+        :param dh_pubkey: the dh_pubkey_0 of the SphinxHeader as seen once
+            the source is reached (after having been blinded by all the hops
+            on the backward path)
+        :type dh_pubkey: bytes or :class:`curve25519.keys.Public`
+        :param shared_keys: The keys shared between the source and all the
+            nodes on the backward path (the last key is just a secrect key
+            known only to the source)
+        :type shared_keys: list
+        :param destination_shared_key: the key shared between the source and
+            the destination (the sender of the packet)
+        :type destination_shared_key: bytes
+        """
+        if isinstance(dh_pubkey, Public):
+            dh_pubkey = dh_pubkey.serialize()
+        assert isinstance(shared_keys, list)
+        for k in shared_keys:
+            assert isinstance(k, bytes)
+        assert isinstance(destination_shared_key, bytes)
+        self.expected_replies[dh_pubkey] = (shared_keys,
+                                            destination_shared_key)
+
+    def _construct_final_header(self, stream_keys, number_of_hops,
+                                last_address_field=None):
         """
         Construct the header as it will be decrypted by the destination.
         """
@@ -106,19 +147,32 @@ class SphinxEndHost(SphinxNode):
         # is used instead, which leaks the path length to the destination
         random_pad = os.urandom(complete_header_size - len(filler)
                                 - self.address_length)
-        return self.get_localhost_address() + random_pad + filler
+        if last_address_field is None:
+            address_field = self.get_localhost_address()
+        else:
+            address_field = last_address_field
+        return address_field + random_pad + filler
 
-    def construct_header_from_keys(self, shared_keys, dh_pubkey_0, next_hops):
+    def construct_header(self, shared_keys, dh_pubkey_0, next_hops,
+                         last_address_field=None):
         """
-        Constructs a new SphinxHeader
+        Constructs a new SphinxHeader, given the keys (use
+        :func:`compute_shared_keys` to compute them).
 
         :param shared_keys: List of keys shared with each node on the path
         :type shared_keys: list
-        :param dh_pubkey_0: Diffie-Hellman public key (of the source)
+        :param dh_pubkey_0: temporary Diffie-Hellman public key (of the source)
             for the first node
         :type dh_pubkey_0: bytes
         :param next_hops: list of node names (addresses) on the path
         :type next_hops: list
+        :param last_address_field: the address field obtained by the last
+            hop (destination) when decrypting the blinded header. This is
+            meant to be used as an identifier (e.g. for reply packets).
+            If not provided, the last address will be set to the localhost
+            address: for forward packets, this allows the destination to
+            check that it is the intended recipient of the packet.
+        :type last_address_field: bytes
         :returns: the newly-created SphinxHeader instance
         :rtype: :class:`SphinxHeader`
         """
@@ -131,6 +185,9 @@ class SphinxEndHost(SphinxNode):
             assert len(address) == self.address_length
         assert isinstance(dh_pubkey_0, bytes)
         assert len(dh_pubkey_0) == 32
+        if last_address_field is not None:
+            assert isinstance(last_address_field, bytes)
+            assert len(last_address_field) == self.address_length
 
         # Derive the necessary keys from the shared keys
         stream_keys = [derive_stream_key(k) for k in shared_keys]
@@ -140,8 +197,9 @@ class SphinxEndHost(SphinxNode):
         # at each hop by the nodes, starting by the destination's decryption
         # of the blinded header it will receive.
         pad_size = compute_pernode_size(self.address_length)
-        decrypted_header = \
-            self._construct_final_header(stream_keys, len(next_hops))
+        decrypted_header = self._construct_final_header(stream_keys,
+                                                        len(next_hops),
+                                                        last_address_field)
         reversed_lists = zip(reversed(next_hops), reversed(stream_keys),
                              reversed(mac_keys))
         for address, stream_key, mac_key in reversed_lists:
@@ -198,17 +256,60 @@ class SphinxEndHost(SphinxNode):
         assert isinstance(message, bytes)
         assert isinstance(shared_key, bytes)
         assert isinstance(header, SphinxHeader)
+        # Since the padding requires at least two bytes, the message should be
+        # strictly smaller (by at least two bytes) than the payload length.
+        assert len(message) < self.payload_length-1
         payload = pad_to_block_multiple(
-            pad_to_length(message, self.payload_length), BLOCK_SIZE)
+            pad_to_length(message, self.payload_length - 1), BLOCK_SIZE)
         prp_key = derive_prp_key(shared_key)
         payload = prp_encrypt(prp_key, payload)
         return SphinxPacket(header, payload)
 
+    def process_incoming_reply(self, packet, allow_reuse=False):
+        """
+        Process a Sphinx packet expected to be a reply, as a source.
+
+        :param packet: a Sphinx packet (can be parsed or not)
+        :type packet: bytes or :class:`SphinxPacket`
+        :param allow_reuse: If set to true, the header is not removed from the
+            dictionary of expected replies, allowing future packets carrying
+            the same header.
+        :returns: a :class:`ProcessingResult` instance with the result
+            of the processing of the input packet. The result type will either
+            be DROP or AT_DESTINATION.
+        :rtype: :class:`ProcessingResult`
+        """
+        if not isinstance(packet, SphinxPacket):
+            assert isinstance(packet, bytes)
+            try:
+                packet = SphinxPacket.parse_bytes_to_packet(packet)
+            except PacketParsingException:
+                return ProcessingResult(ProcessingResult.ResultType.DROP)
+        header = packet.header
+        if header.dh_pubkey_0 not in self.expected_replies:
+            return ProcessingResult(ProcessingResult.ResultType.DROP)
+        shared_keys, destination_shared_key = \
+            self.expected_replies[header.dh_pubkey_0]
+        source_key = shared_keys[-1]
+        if not verify_mac(derive_mac_key(source_key), header.blinded_header,
+                          header.mac_0):
+            return ProcessingResult(ProcessingResult.ResultType.DROP)
+        if not allow_reuse:
+            del self.expected_replies[header.dh_pubkey_0]
+        payload = packet.payload
+        for prp_key in reversed([derive_prp_key(key)
+                                     for key in shared_keys[:-1]]):
+            payload = prp_encrypt(prp_key, payload)
+        payload = prp_decrypt(derive_prp_key(destination_shared_key), payload)
+        return ProcessingResult(ProcessingResult.ResultType.AT_DESTINATION,
+                                payload)
+
     @staticmethod
     def get_message_from_payload(payload):
         """
-        Obtain original message from decrypted payload (removes padding)
+        Obtain original message from payload (remove padding.
         """
+        assert isinstance(payload, bytes)
         return remove_length_pad(remove_block_pad(payload))
 
 
@@ -218,34 +319,38 @@ def test():
     shared_keys = [b'1'*32, b'2'*32, b'3'*32]
     dh_pubkey_0 = b'a'*32
     next_hops = [b'x'*16, b'y'*16, b'z'*16]
-    header = end_host.construct_header_from_keys(shared_keys, dh_pubkey_0,
-                                                 next_hops)
+    header = end_host.construct_header(shared_keys, dh_pubkey_0, next_hops)
 
     end_host.construct_forward_packet(b'1234', shared_keys, header)
     end_host.construct_reply_packet(b'5678', shared_keys[-1], header)
 
 
 def test_routing():
+    # Fake key for the source as the last node, used in replies. This
+    # key may be always the same, but in any case it does not need to be
+    # known to any other party
     source_private = Private()
     node_1_private = Private()
     node_2_private = Private()
     node_3_private = Private()
 
     source = SphinxEndHost(source_private)
+    source_pubkey = source.public
     node_1 = SphinxNode(node_1_private)
     node_2 = SphinxNode(node_2_private)
-    node_3 = SphinxEndHost(node_3_private)
+    node_3 = SphinxEndHost(node_3_private) # Destination
 
+    ## Forward packet ##
     nodes_privates = [node_1_private, node_2_private, node_3_private]
     nodes_pubkeys = [p.get_public() for p in nodes_privates]
-    shared_keys = compute_shared_keys(source_private, nodes_pubkeys)
+    tmp_initial_private = Private()
+    shared_keys, _ = compute_shared_keys(tmp_initial_private, nodes_pubkeys)
 
-    source_pubkey = source_private.get_public()
+    tmp_initial_pubkey = tmp_initial_private.get_public().serialize()
     next_hops = [b'1'*16, b'2'*16, b'3'*16]
     message = b"Test Message"
-    header = source.construct_header_from_keys(shared_keys,
-                                               source_pubkey.serialize(),
-                                               next_hops)
+    header = source.construct_header(shared_keys, tmp_initial_pubkey,
+                                     next_hops)
     packet = source.construct_forward_packet(message, shared_keys, header)
     raw_packet = packet.pack()
 
@@ -265,6 +370,46 @@ def test_routing():
     result = node_3.get_packet_processing_result(raw_packet)
     assert result.is_at_destination()
     assert node_3.get_message_from_payload(result.result) == message
+
+    ## Reply packet ##
+    # Remove previous last hop (destination), reverse the order of the nodes
+    # and add the public key of the source as last node.
+    nodes_pubkeys = nodes_pubkeys[-2::-1]
+    nodes_pubkeys.append(source_pubkey)
+    # reply_source_private: temporary private key for the reply packet
+    tmp_initial_private = Private()
+    shared_keys, final_dh_pubkey = compute_shared_keys(tmp_initial_private,
+                                                       nodes_pubkeys)
+    source_self_shared_key = shared_keys[-1]
+    dest_shared_key = tmp_initial_private.get_shared_key(node_3.public)
+
+    tmp_initial_pubkey = tmp_initial_private.get_public().serialize()
+    next_hops = [b'2'*16, b'1'*16, b'source_address00']
+    header = source.construct_header(shared_keys, tmp_initial_pubkey,
+                                     next_hops)
+    source.add_expected_reply(final_dh_pubkey, shared_keys, dest_shared_key)
+
+    # Node 3 - Destination
+    message = b"Test Reply Message"
+    packet = node_3.construct_reply_packet(message, dest_shared_key, header)
+    raw_packet = packet.pack()
+
+    # Node 2
+    result = node_2.get_packet_processing_result(raw_packet)
+    assert result.is_to_forward()
+    assert result.result[0] == next_hops[1]
+    raw_packet = result.result[1].pack()
+
+    # Node 1
+    result = node_1.get_packet_processing_result(raw_packet)
+    assert result.is_to_forward()
+    assert result.result[0] == next_hops[2]
+    raw_packet = result.result[1].pack()
+
+    # Source
+    result = source.process_incoming_reply(raw_packet)
+    assert result.is_at_destination()
+    assert source.get_message_from_payload(result.result) == message
 
 if __name__ == "__main__":
     test()

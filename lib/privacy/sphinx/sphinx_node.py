@@ -135,8 +135,6 @@ class SphinxNode(object):
         """
         if not isinstance(packet, SphinxPacket):
             assert isinstance(packet, bytes)
-            #TODO:Daniele: modify parsing to support guessing
-            #    for different packet lengths
             try:
                 packet = SphinxPacket.parse_bytes_to_packet(packet)
             except PacketParsingException:
