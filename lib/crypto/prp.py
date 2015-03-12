@@ -15,6 +15,9 @@ recovered plaintext.
 
 It is implemented using two passes of encryption with the Propagating-CBC mode
 for AES (implemented manually since not available in pycrytpo library).
+The mode was tweaked by adding hashing for the history at every block, avoiding
+the attack of ciphertext blocks swapping (because of the linearity of vanilla
+P-CBC this change does not propagate to the rest of the plaintext).
 
 Copyright 2014 ETH Zurich
 
@@ -31,6 +34,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 from Crypto.Cipher import AES
+from _sha1 import sha1
 
 
 BLOCK_SIZE = AES.block_size
@@ -63,8 +67,9 @@ def encrypt_with_aes_pcbc(key, msg, iv=ZEROED_IV):
 
     ciphertext = aes.encrypt(_xor(nth_block(msg, 0), iv))
     for i in range(1,len(msg) // BLOCK_SIZE):
-        ciphertext += aes.encrypt(_xor(nth_block(msg, i), nth_block(msg, i-1),
-                                       last_block(ciphertext)))
+        hashed_past = sha1(nth_block(msg, i-1)
+                           + last_block(ciphertext)).digest()[:16]
+        ciphertext += aes.encrypt(_xor(nth_block(msg, i), hashed_past))
     return ciphertext
 
 
@@ -82,13 +87,18 @@ def decrypt_with_aes_pcbc(key, ciphertext, iv=ZEROED_IV):
 
     msg = _xor(aes.decrypt(nth_block(ciphertext, 0)), iv)
     for i in range(1,len(ciphertext) // BLOCK_SIZE):
-        msg += _xor(aes.decrypt(nth_block(ciphertext, i)),
-                    nth_block(ciphertext, i-1), last_block(msg))
+        hashed_past = sha1(last_block(msg)
+                           + nth_block(ciphertext, i-1)).digest()[:16]
+        msg += _xor(aes.decrypt(nth_block(ciphertext, i)), hashed_past)
     return msg
 
 
 def prp_encrypt(prp_key, msg):
     """
+    Encrypt msg using a PRP keyed with the input key. The reverse operation is
+    :func:`prp_encrypt`, but since it is a PRP it has the property that
+    :func:`prp_decrypt`(:func:`prp_encrypt`(msg)) =
+    :func:`prp_encrypt`(:func:`prp_decrypt`(msg)) = msg.
     """
     assert isinstance(prp_key, bytes)
     assert isinstance(msg, bytes)
@@ -100,6 +110,10 @@ def prp_encrypt(prp_key, msg):
 
 def prp_decrypt(prp_key, ciphertext):
     """
+    Decrypt the ciphertext using a PRP keyed with the input key. It reverses
+    :func:`prp_encrypt`, but since it is a PRP it has the property that
+    :func:`prp_decrypt`(:func:`prp_encrypt`(msg)) =
+    :func:`prp_encrypt`(:func:`prp_decrypt`(msg)) = msg.
     """
     assert isinstance(prp_key, bytes)
     assert isinstance(ciphertext, bytes)
