@@ -26,8 +26,8 @@ from lib.privacy.sphinx.packet import compute_blinded_header_size,\
 from lib.privacy.sphinx.sphinx_crypto_util import stream_cipher_decrypt,\
     derive_stream_key, derive_mac_key, stream_cipher_encrypt, compute_mac,\
     derive_prp_key, pad_to_length, pad_to_block_multiple,\
-    get_secret_for_blinding, blind_dh_key, remove_block_pad, remove_length_pad,\
-    verify_mac
+    get_secret_for_blinding, blind_dh_key, remove_block_pad,\
+    remove_length_pad, verify_mac
 import os
 from lib.crypto.prp import prp_encrypt, BLOCK_SIZE, prp_decrypt
 from curve25519.keys import Private, Public
