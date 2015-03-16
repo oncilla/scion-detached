@@ -20,7 +20,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-from lib.privacy.sphinx.packet import SphinxPacket
+import lib.privacy.sphinx.packet as sphinx_packet_mod
+from lib.privacy.sphinx.packet import SphinxHeader, SphinxPacket
 
 MAX_HOPS_LENGTH = 1 # Number of bytes needed for the max_hops field
 NONCE_LENGTH = 4 # Size of a nonce in bytes
@@ -110,16 +111,6 @@ class HornetPacketType(object):
         return packet_type.to_bytes(cls._LEN, "big")
 
 
-def _get_max_hops(raw_packet_or_header):
-    """
-    Returns the max_hops field of a raw Hornet packet or header
-    """
-    assert isinstance(raw_packet_or_header, bytes)
-    max_hops_index = HornetPacketType.length()
-    return int.from_bytes(raw_packet_or_header[max_hops_index:max_hops_index +
-                                               MAX_HOPS_LENGTH], "big")
-
-
 class SetupPacket(object):
     """
     Packet of the setup phase.
@@ -190,7 +181,7 @@ class SetupPacket(object):
                                              sphinx_packet_index], "big")
 
         fs_payload_index = -compute_fs_payload_size(max_hops=max_hops)
-        kwargs[max_hops] = max_hops
+        kwargs["max_hops"] = max_hops
         sphinx_packet = SphinxPacket.parse_bytes_to_packet(
             raw[sphinx_packet_index:fs_payload_index], **kwargs)
         fs_payload = raw[fs_payload_index:]
@@ -325,4 +316,58 @@ class DataPacket(object):
         :rtype: bytes
         """
         return self.header.pack() + self.payload
+
+
+def test_setup(max_hops=DEFAULT_MAX_HOPS):
+    dh_pubkey_0 = b'1'*sphinx_packet_mod.DEFAULT_GROUP_ELEM_LENGTH
+    mac_0 = b'2'*MAC_SIZE
+    blinded_header = b'3'*sphinx_packet_mod.compute_blinded_header_size(max_hops=max_hops)
+    first_hop = b'4'*sphinx_packet_mod.DEFAULT_ADDRESS_LENGTH
+    sphinx_payload = b'5'*sphinx_packet_mod.DEFAULT_PAYLOAD_LENGTH
+    sphinx_header = SphinxHeader(dh_pubkey_0, mac_0, blinded_header, first_hop)
+    sphinx_packet = SphinxPacket(sphinx_header, sphinx_payload)
+
+    packet_type = HornetPacketType.SETUP_FWD
+    expiration_time = 1426520000
+    fs_payload = b'6'*compute_fs_payload_size(max_hops=max_hops)
+    setup_packet = SetupPacket(packet_type, expiration_time, sphinx_packet,
+                               fs_payload, max_hops)
+    raw_packet = setup_packet.pack()
+
+    parsed_packet = SetupPacket.parse_bytes_to_packet(raw_packet)
+    assert parsed_packet.packet_type == packet_type
+    assert parsed_packet.expiration_time == expiration_time
+    assert parsed_packet.sphinx_packet.pack() == sphinx_packet.pack()
+    assert parsed_packet.fs_payload == fs_payload
+
+
+def test_data_transmission(max_hops=DEFAULT_MAX_HOPS):
+    packet_type = HornetPacketType.DATA_FWD
+    nonce = b'1'*NONCE_LENGTH
+    current_fs = b'2'*FS_LENGTH
+    current_mac = b'3'*MAC_SIZE
+    blinded_aheader = b'4'*compute_blinded_aheader_size(max_hops)
+    header = AnonymousHeader(packet_type, nonce, current_fs, current_mac,
+                             blinded_aheader, max_hops)
+    payload = b'5'*DATA_PAYLOAD_LENGTH
+    data_packet = DataPacket(header, payload)
+    raw_packet = data_packet.pack()
+
+    parsed_packet = DataPacket.parse_bytes_to_packet(raw_packet)
+    assert parsed_packet.header.packet_type == packet_type
+    assert parsed_packet.header.max_hops == max_hops
+    assert parsed_packet.header.nonce == nonce
+    assert parsed_packet.header.current_fs == current_fs
+    assert parsed_packet.header.current_mac == current_mac
+    assert parsed_packet.header.blinded_aheader == blinded_aheader
+    assert parsed_packet.payload == payload
+
+
+if __name__ == "__main__":
+    test_setup()
+    test_setup(max_hops=15)
+    test_setup(max_hops=5)
+    test_data_transmission()
+    test_data_transmission(max_hops=15)
+    test_data_transmission(max_hops=5)
 
