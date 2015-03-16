@@ -86,10 +86,10 @@ class SphinxNode(object):
     """
     A Sphinx mix node, able to process :class:`SphinxPacket`s.
 
-    :ivar private_key: private key of the SphinxNode
-    :vartype private_key: bytes or :class:`curve25519.keys.Private`
-    :ivar public_key: public key of the SphinxNode
-    :vartype public_key: bytes
+    :ivar private: private key of the SphinxNode
+    :vartype private: bytes or :class:`curve25519.keys.Private`
+    :ivar public: public key of the SphinxNode
+    :vartype public: bytes
     :ivar max_hops: maximum number of nodes on the path
     :vartype max_hops: int
     :ivar address_length: length of a node address (name)
