@@ -150,7 +150,7 @@ class SphinxNode(object):
         Setter for public property (setting not allowed).
         """
         raise TypeError("Cannot assign directly to public property, "
-                        "assing to private property instead")
+                        "assign to private property instead")
 
     def get_localhost_address(self):
         """

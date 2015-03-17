@@ -111,6 +111,15 @@ class HornetPacketType(object):
         return packet_type.to_bytes(cls._LEN, "big")
 
 
+def get_packet_type(raw_packet_or_header):
+    """
+    Get the type of a Hornet packet or header as byte sequence
+    """
+    assert isinstance(raw_packet_or_header, bytes)
+    length = HornetPacketType.length()
+    return HornetPacketType.from_bytes(raw_packet_or_header[:length])
+
+
 class SetupPacket(object):
     """
     Packet of the setup phase.
