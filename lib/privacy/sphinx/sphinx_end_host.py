@@ -55,11 +55,14 @@ def compute_shared_keys(source_private, nodes_pubkeys):
             tmp_pubkey = bf.get_shared_public(tmp_pubkey)
         shared_key = source_private.get_shared_key(tmp_pubkey)
         shared_keys.append(shared_key)
-        blinding_factors.append(compute_blinding_private(source_pubkey,
-                                                         shared_key))
-        last_source_pubkey = source_pubkey
-        source_pubkey = blinding_factors[-1].get_shared_public(source_pubkey)
-    return shared_keys, blinding_factors, last_source_pubkey
+        # Except for the last iteration, compute the next blinding
+        # factor and the next source_pubkey
+        if node_pubkey is not nodes_pubkeys[-1]:
+            blinding_factors.append(compute_blinding_private(source_pubkey,
+                                                             shared_key))
+            source_pubkey = \
+                blinding_factors[-1].get_shared_public(source_pubkey)
+    return shared_keys, blinding_factors, source_pubkey
 
 
 class SphinxEndHost(SphinxNode):
