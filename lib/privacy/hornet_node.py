@@ -25,7 +25,7 @@ from lib.privacy.hornet_packet import get_packet_type, HornetPacketType
 
 class HornetNode(object):
     """
-    A Hornet node, able to process packet of the setup phase
+    A Hornet node, able to process packets of the setup phase
     (:class:`hornet_packet.SetupPacket`) and of the data forwarding phase
     (:class:`hornet_packet.DataPacket`).
 
@@ -37,9 +37,16 @@ class HornetNode(object):
     :vartype public: bytes
     """
 
-    def __init__(self, secret_key, private, public=None):
+    def __init__(self, secret_key, private=None, public=None, sphinx_node=None):
         assert isinstance(secret_key, bytes)
-        self._sphinx_node = SphinxNode(private, public)
+        if sphinx_node is not None:
+            assert isinstance(sphinx_node, SphinxNode)
+            assert private is None, "provide private or sphinx_node, not both"
+            self._sphinx_node = sphinx_node
+        else:
+            assert private is not None, ("parameter private and sphinx_node"
+                                         "cannot both be None")
+            self._sphinx_node = SphinxNode(private, public)
         self.secret_key = secret_key
 
     @property
