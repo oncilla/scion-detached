@@ -43,11 +43,11 @@ def compute_shared_keys(source_private, nodes_pubkeys):
     as it is received by the last hop: this is useful in reply packets so that
     the source may recognize a reply without having do a DH handshake.
     """
-    shared_keys = [source_private.get_shared_key(nodes_pubkeys[0])]
+    shared_keys = []
+    blinding_factors = []
     source_pubkey = source_private.get_public()
-    blinding_factors = [compute_blinding_private(source_pubkey,
-                                                 shared_keys[0])]
-    for node_pubkey in nodes_pubkeys[1:]:
+
+    for node_pubkey in nodes_pubkeys:
         if not isinstance(node_pubkey, Public):
             node_pubkey = Public(node_pubkey)
         tmp_pubkey = node_pubkey
@@ -55,10 +55,11 @@ def compute_shared_keys(source_private, nodes_pubkeys):
             tmp_pubkey = bf.get_shared_public(tmp_pubkey)
         shared_key = source_private.get_shared_key(tmp_pubkey)
         shared_keys.append(shared_key)
-        source_pubkey = bf.get_shared_public(source_pubkey)
         blinding_factors.append(compute_blinding_private(source_pubkey,
                                                          shared_key))
-    return shared_keys, source_pubkey
+        last_source_pubkey = source_pubkey
+        source_pubkey = blinding_factors[-1].get_shared_public(source_pubkey)
+    return shared_keys, last_source_pubkey
 
 
 class SphinxEndHost(SphinxNode):
