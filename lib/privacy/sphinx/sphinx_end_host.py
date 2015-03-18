@@ -59,7 +59,7 @@ def compute_shared_keys(source_private, nodes_pubkeys):
                                                          shared_key))
         last_source_pubkey = source_pubkey
         source_pubkey = blinding_factors[-1].get_shared_public(source_pubkey)
-    return shared_keys, last_source_pubkey
+    return shared_keys, blinding_factors, last_source_pubkey
 
 
 class SphinxEndHost(SphinxNode):
@@ -322,7 +322,7 @@ def test_routing():
     nodes_privates = [node_1_private, node_2_private, node_3_private]
     nodes_pubkeys = [p.get_public() for p in nodes_privates]
     tmp_initial_private = Private()
-    shared_keys, _ = compute_shared_keys(tmp_initial_private, nodes_pubkeys)
+    shared_keys, _, _= compute_shared_keys(tmp_initial_private, nodes_pubkeys)
 
     tmp_initial_pubkey = tmp_initial_private.get_public().serialize()
     next_hops = [b'1'*16, b'2'*16, b'3'*16]
@@ -356,8 +356,8 @@ def test_routing():
     nodes_pubkeys.append(source_pubkey)
     # reply_source_private: temporary private key for the reply packet
     tmp_initial_private = Private()
-    shared_keys, final_dh_pubkey = compute_shared_keys(tmp_initial_private,
-                                                       nodes_pubkeys)
+    shared_keys, _, final_dh_pubkey = compute_shared_keys(tmp_initial_private,
+                                                          nodes_pubkeys)
     source_self_shared_key = shared_keys[-1]
     dest_shared_key = tmp_initial_private.get_shared_key(node_3.public)
 
