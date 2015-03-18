@@ -36,8 +36,8 @@ class ProcessingResult(object):
     """
     Result of the processing of a :class:`SphinxPacket`
 
-    :ivar type: the type of the result
-    :vartype type: :class:`ProcessingResult.ResultType`
+    :ivar result_type: the type of the result
+    :vartype result_type: :class:`ProcessingResult.Type`
     :ivar result: the result of the processing. The format depends on the type:
         - if the type is FORWARD, it is (next_hop, packet);
         - if the type is AT_DESTINATION, it is payload_message;
@@ -45,7 +45,7 @@ class ProcessingResult(object):
     :vartype result: tuple or string or bytes
     """
 
-    class ResultType(object):
+    class Type(object):
         """
         Type of the result of the processing of a :class:`SphinxPacket`
 
@@ -65,21 +65,21 @@ class ProcessingResult(object):
         """
         Returns True if the processed packet was invalid, False otherwise
         """
-        return self.result_type == ProcessingResult.ResultType.DROP
+        return self.result_type == ProcessingResult.Type.DROP
 
     def is_at_destination(self):
         """
         Returns True if the processed packet has reached the destination,
         False otherwise
         """
-        return self.result_type == ProcessingResult.ResultType.AT_DESTINATION
+        return self.result_type == ProcessingResult.Type.AT_DESTINATION
 
     def is_to_forward(self):
         """
         Returns True if the processed packet should be forwarded,
         False otherwise
         """
-        return self.result_type == ProcessingResult.ResultType.FORWARD
+        return self.result_type == ProcessingResult.Type.FORWARD
 
 
 class SphinxNode(object):
@@ -173,7 +173,7 @@ class SphinxNode(object):
             try:
                 packet = SphinxPacket.parse_bytes_to_packet(packet)
             except PacketParsingException:
-                return ProcessingResult(ProcessingResult.ResultType.DROP)
+                return ProcessingResult(ProcessingResult.Type.DROP)
         header = packet.header
         if not isinstance(self.private, Private):
             private = Private(raw=self.private)
@@ -182,7 +182,7 @@ class SphinxNode(object):
         shared_key = private.get_shared_key(Public(header.dh_pubkey_0))
         if not verify_mac(derive_mac_key(shared_key), header.blinded_header,
                           header.mac_0):
-            return ProcessingResult(ProcessingResult.ResultType.DROP)
+            return ProcessingResult(ProcessingResult.Type.DROP)
 
         pad_size = compute_pernode_size(self.address_length)
         stream_key = derive_stream_key(shared_key)
@@ -192,7 +192,7 @@ class SphinxNode(object):
         payload = prp_decrypt(derive_prp_key(shared_key), packet.payload)
         next_hop = decrypted_header[:self.address_length]
         if next_hop == self.get_localhost_address():
-            return ProcessingResult(ProcessingResult.ResultType.AT_DESTINATION,
+            return ProcessingResult(ProcessingResult.Type.AT_DESTINATION,
                                     payload)
         # Construct the next header
         next_mac = decrypted_header[self.address_length:
@@ -205,7 +205,7 @@ class SphinxNode(object):
                                    next_blinded_header, next_hop)
         # Construct the next packet
         next_packet = SphinxPacket(next_header, payload)
-        return ProcessingResult(ProcessingResult.ResultType.FORWARD,
+        return ProcessingResult(ProcessingResult.Type.FORWARD,
                                 (next_hop, next_packet))
 
     def construct_reply_packet(self, message, shared_key, header):

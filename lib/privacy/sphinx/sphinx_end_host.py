@@ -261,16 +261,16 @@ class SphinxEndHost(SphinxNode):
             try:
                 packet = SphinxPacket.parse_bytes_to_packet(packet)
             except PacketParsingException:
-                return ProcessingResult(ProcessingResult.ResultType.DROP)
+                return ProcessingResult(ProcessingResult.Type.DROP)
         header = packet.header
         if header.dh_pubkey_0 not in self.expected_replies:
-            return ProcessingResult(ProcessingResult.ResultType.DROP)
+            return ProcessingResult(ProcessingResult.Type.DROP)
         shared_keys, destination_shared_key = \
             self.expected_replies[header.dh_pubkey_0]
         source_key = shared_keys[-1]
         if not verify_mac(derive_mac_key(source_key), header.blinded_header,
                           header.mac_0):
-            return ProcessingResult(ProcessingResult.ResultType.DROP)
+            return ProcessingResult(ProcessingResult.Type.DROP)
         if not allow_reuse:
             del self.expected_replies[header.dh_pubkey_0]
         payload = packet.payload
@@ -278,7 +278,7 @@ class SphinxEndHost(SphinxNode):
                                      for key in shared_keys[:-1]]):
             payload = prp_encrypt(prp_key, payload)
         payload = prp_decrypt(derive_prp_key(destination_shared_key), payload)
-        return ProcessingResult(ProcessingResult.ResultType.AT_DESTINATION,
+        return ProcessingResult(ProcessingResult.Type.AT_DESTINATION,
                                 payload)
 
     @staticmethod
