@@ -26,7 +26,7 @@ from lib.privacy.sphinx.packet import compute_blinded_header_size,\
 from lib.privacy.sphinx.sphinx_crypto_util import stream_cipher_decrypt,\
     derive_stream_key, derive_mac_key, stream_cipher_encrypt, compute_mac,\
     derive_prp_key, pad_to_length, pad_to_block_multiple,\
-    get_secret_for_blinding, blind_dh_key, remove_block_pad,\
+    compute_blinding_private, remove_block_pad,\
     remove_length_pad, verify_mac
 import os
 from lib.crypto.prp import prp_encrypt, BLOCK_SIZE, prp_decrypt
@@ -45,19 +45,19 @@ def compute_shared_keys(source_private, nodes_pubkeys):
     """
     shared_keys = [source_private.get_shared_key(nodes_pubkeys[0])]
     source_pubkey = source_private.get_public()
-    secrets_for_blinding = [get_secret_for_blinding(source_pubkey.serialize(),
-                                                    shared_keys[0])]
+    blinding_factors = [compute_blinding_private(source_pubkey,
+                                                 shared_keys[0])]
     for node_pubkey in nodes_pubkeys[1:]:
         if not isinstance(node_pubkey, Public):
             node_pubkey = Public(node_pubkey)
-        tmp_pubkey = source_private.get_shared_public(node_pubkey)
-        for blinding_secret in secrets_for_blinding:
-            tmp_pubkey = blind_dh_key(tmp_pubkey, blinding_secret)
-        shared_key = curve25519.keys._hash_shared(tmp_pubkey)
+        tmp_pubkey = node_pubkey
+        for bf in blinding_factors:
+            tmp_pubkey = bf.get_shared_public(tmp_pubkey)
+        shared_key = source_private.get_shared_key(tmp_pubkey)
         shared_keys.append(shared_key)
-        source_pubkey = blind_dh_key(source_pubkey, secrets_for_blinding[-1])
-        secrets_for_blinding.append(get_secret_for_blinding(source_pubkey,
-                                                            shared_key))
+        source_pubkey = bf.get_shared_public(source_pubkey)
+        blinding_factors.append(compute_blinding_private(source_pubkey,
+                                                         shared_key))
     return shared_keys, source_pubkey
 
 

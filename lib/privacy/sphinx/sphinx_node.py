@@ -27,8 +27,8 @@ from lib.privacy.sphinx.packet import DEFAULT_MAX_HOPS,\
 from lib.privacy.sphinx.exception import PacketParsingException
 from curve25519.keys import Private, Public
 from lib.privacy.sphinx.sphinx_crypto_util import verify_mac, derive_mac_key,\
-    derive_stream_key, stream_cipher_decrypt, blind_dh_key, derive_prp_key,\
-    get_secret_for_blinding, BLOCK_SIZE, pad_to_block_multiple, pad_to_length
+    derive_stream_key, stream_cipher_decrypt, derive_prp_key,\
+    compute_blinding_private, BLOCK_SIZE, pad_to_block_multiple, pad_to_length
 from lib.crypto.prp import prp_decrypt, prp_encrypt
 
 
@@ -89,7 +89,7 @@ class SphinxNode(object):
     :ivar private: private key of the SphinxNode
     :vartype private: bytes or :class:`curve25519.keys.Private`
     :ivar public: public key of the SphinxNode
-    :vartype public: bytes
+    :vartype public: bytes or :class:`curve25519.keys.Public`
     :ivar max_hops: maximum number of nodes on the path
     :vartype max_hops: int
     :ivar address_length: length of a node address (name)
@@ -198,9 +198,10 @@ class SphinxNode(object):
         next_mac = decrypted_header[self.address_length:
                                     self.address_length+MAC_SIZE]
         next_blinded_header = decrypted_header[self.address_length+MAC_SIZE:]
-        secret_for_blinding = get_secret_for_blinding(header.dh_pubkey_0,
-                                                      shared_key)
-        next_dh_pubkey = blind_dh_key(header.dh_pubkey_0, secret_for_blinding)
+        blinding_factor = compute_blinding_private(header.dh_pubkey_0,
+                                                   shared_key)
+        next_dh_pubkey = \
+            blinding_factor.get_shared_public(Public(header.dh_pubkey_0))
         next_header = SphinxHeader(next_dh_pubkey, next_mac,
                                    next_blinded_header, next_hop)
         # Construct the next packet
@@ -235,7 +236,9 @@ class SphinxNode(object):
 def test():
     private = Private()
     node = SphinxNode(private)
-    node.private = b'1'*32
+    new_private = Private()
+    node.private = new_private
+    assert node.public.serialize() == new_private.get_public().serialize()
     
 
 if __name__ == '__main__':

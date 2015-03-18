@@ -174,35 +174,21 @@ def stream_cipher_decrypt(stream_key, ciphertext):
     return aes_instance.decrypt(ciphertext)
 
 
-def get_secret_for_blinding(dh_pubkey, shared_key):
+def compute_blinding_private(dh_pubkey, shared_key):
     """
     Compute the secret needed for the blinding (see :func:`blind_dh_key`).
     This is not the blinding factor as in the Sphinx paper, which instead will
     be computed by the :func:`blind_dh_key` function.
     """
-    return sha256(b"sphinx-blinding-factor:" + dh_pubkey + shared_key).digest()
-
-
-def blind_dh_key(dh_pubkey, secret_for_blinding):
-    """
-    Blind a DH key dh_pubkey (of the form g^x) by raising it to the blinding
-    factor b, an exponent computed based on the secret_for_blinding
-    """
-    if isinstance(dh_pubkey, bytes):
+    if isinstance(dh_pubkey, Public):
+        dh_pubkey = dh_pubkey.serialize()
+    else:
+        assert isinstance(dh_pubkey, bytes)
         assert len(dh_pubkey) == 32
-        dh_pubkey = Public(dh_pubkey)
-    assert isinstance(secret_for_blinding, bytes)
-    assert len(secret_for_blinding) == 32
-    # The following is a hack to reuse the python wrapper
-    # of the curve25519-donna library to generate an element in Z_q^*.
-    # The input secret_for_blinding should be computed through a hash function,
-    # so in general it will not be an element of Z_q^*, just a random byte
-    # sequence. This is used to generate a "fake" DH private key,
-    # which represents the actual blinding factor. Blinding the dh_pubkey is
-    # equivalent to computing a shared secret (which is another group element).
-    blinding_factor = Private(secret=secret_for_blinding)
-    blinded_dh_pubkey = blinding_factor.get_shared_public(dh_pubkey)
-    return blinded_dh_pubkey.serialize()
+    assert isinstance(shared_key, bytes)
+    secret_for_blinding = sha256(b"sphinx-blinding-factor:" + dh_pubkey +
+                                 shared_key).digest()
+    return Private(secret=secret_for_blinding)
 
 
 def test():
