@@ -20,6 +20,7 @@ limitations under the License.
 """
 #TODO/dasoni: add Sphinx reference
 from lib.privacy.sphinx.exception import PacketParsingException
+from curve25519.keys import Public
 
 # Default maximum number of hops on a path, including the destination
 DEFAULT_MAX_HOPS = 8
@@ -62,7 +63,7 @@ class SphinxHeader(object):
     Header for a Sphinx packet
 
     :ivar dh_pubkey_0: Diffie-Hellman key-half for the first node
-    :vartype dh_pubkey_0: bytes
+    :vartype dh_pubkey_0: bytes or :class:`curve25519.key.Public`
     :ivar mac_0: MAC for the first node
     :vartype mac_0: bytes
     :ivar blinded_header: Blinded header containing next hops and MACs
@@ -72,6 +73,13 @@ class SphinxHeader(object):
     """
 
     def __init__(self, dh_pubkey_0, mac_0, blinded_header, first_hop=None):
+        if not isinstance(dh_pubkey_0, bytes):
+            assert isinstance(dh_pubkey_0, Public)
+            dh_pubkey_0 = dh_pubkey_0.serialize()
+        else:
+            assert len(dh_pubkey_0) == 32
+        assert isinstance(mac_0, bytes)
+        assert len(mac_0) == MAC_SIZE
         self.dh_pubkey_0 = dh_pubkey_0
         self.mac_0 = mac_0
         self.blinded_header = blinded_header
