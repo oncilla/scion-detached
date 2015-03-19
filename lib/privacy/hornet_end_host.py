@@ -25,7 +25,8 @@ from lib.privacy.sphinx.sphinx_end_host import SphinxEndHost,\
 import uuid
 from curve25519.keys import Private
 from lib.privacy.session import SetupPathData, SessionRequestInfo
-from lib.privacy.hornet_packet import compute_fs_payload_size
+from lib.privacy.hornet_packet import compute_fs_payload_size, SetupPacket,\
+    HornetPacketType
 from lib.privacy.hornet_crypto_util import generate_initial_fs_payload
 import os
 
@@ -129,7 +130,8 @@ class HornetSource(HornetNode):
         del self._session_requests_by_reply_id[reply_id]
 
     def create_new_session_request(self, fwd_path, fwd_pubkeys, bwd_path,
-                                   bwd_pubkeys, valid_for_seconds = None):
+                                   bwd_pubkeys, session_expiration_time,
+                                   valid_for_seconds = None):
         """
         Construct the first packet of the setup, and store information about
         the session request, returning a request_id referring to it.
@@ -192,6 +194,9 @@ class HornetSource(HornetNode):
                         construct_forward_packet(payload,
                                                  fwd_shared_sphinx_keys,
                                                  fwd_header))
-        setup_packet = None #FIXME: continue implementation
+        setup_packet = SetupPacket(HornetPacketType.SETUP_FWD,
+                                   session_expiration_time, sphinx_packet,
+                                   fwd_initial_fs_payload,
+                                   self._sphinx_end_host.max_hops)
         return (session_id, setup_packet)
 
