@@ -23,6 +23,10 @@ limitations under the License.
 from Crypto.Cipher import AES
 from Crypto.Util import Counter
 from hashlib import sha256
+from lib.privacy.hornet_packet import SHARED_KEY_LENGTH
+
+
+ZEROED_IV = b'\0'*AES.block_size
 
 
 def generate_initial_fs_payload(shared_sphinx_key, fs_payload_length):
@@ -40,6 +44,42 @@ def generate_initial_fs_payload(shared_sphinx_key, fs_payload_length):
     return aes_instance.encrypt(b'\0'*fs_payload_length)
 
 
+def _derive_fs_key_encdec_key(node_secret_key):
+    """
+    Derive the key for the encryption/decryption of the shared key in the
+    forwarding segment from the secret key (SV) of the node.
+    """
+    assert isinstance(node_secret_key, bytes)
+    return sha256(b"hornet-keyderivation-fs-key-encdec:" +
+                  node_secret_key).digest()
+
+
+def fs_shared_key_encrypt(node_secret_key, fs_shared_key):
+    """
+    Encrypt the shared key (as first part of a forwarding segment) with the
+    node's secret key.
+    """
+    assert isinstance(node_secret_key, bytes)
+    assert isinstance(fs_shared_key, bytes)
+    assert len(fs_shared_key) == SHARED_KEY_LENGTH
+    aes_instance = AES.new(_derive_fs_key_encdec_key(node_secret_key),
+                           mode=AES.MODE_CBC, IV=ZEROED_IV)
+    return aes_instance.encrypt(fs_shared_key)
+
+
+def fs_shared_key_decrypt(node_secret_key, encrypted_fs_shared_key):
+    """
+    Decrypt the shared key (first part of a forwarding segment) with the node's
+    secret key.
+    """
+    assert isinstance(node_secret_key, bytes)
+    assert isinstance(encrypted_fs_shared_key, bytes)
+    assert len(encrypted_fs_shared_key) == SHARED_KEY_LENGTH
+    aes_instance = AES.new(_derive_fs_key_encdec_key(node_secret_key),
+                           mode=AES.MODE_CBC, IV=ZEROED_IV)
+    return aes_instance.decrypt(encrypted_fs_shared_key)
+
+
 def test():
     shared_sphinx_key = b'1'*16
     fs_payload_length = 800
@@ -50,6 +90,12 @@ def test():
     assert len(fs_payload_1) == fs_payload_length
     assert fs_payload_1 == fs_payload_2
     assert isinstance(fs_payload_1, bytes)
+
+    node_secret_key = b'2'*32
+    fs_shared_key = b'3'*16
+    enc_fs_key = fs_shared_key_encrypt(node_secret_key, fs_shared_key)
+    dec_fs_key = fs_shared_key_decrypt(node_secret_key, enc_fs_key)
+    assert dec_fs_key == fs_shared_key
 
 
 if __name__ == "__main__":
