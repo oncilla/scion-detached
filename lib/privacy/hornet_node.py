@@ -21,7 +21,8 @@ limitations under the License.
 """
 from lib.privacy.sphinx.sphinx_node import SphinxNode
 from lib.privacy.hornet_packet import get_packet_type, HornetPacketType,\
-    TIMESTAMP_LENGTH, SHARED_KEY_LENGTH, ROUTING_INFO_LENGTH, FS_LENGTH
+    TIMESTAMP_LENGTH, SHARED_KEY_LENGTH, ROUTING_INFO_LENGTH, FS_LENGTH,\
+    SetupPacket
 from lib.privacy.hornet_crypto_util import fs_shared_key_encrypt,\
     derive_fs_encdec_key, fs_shared_key_decrypt, generate_fs_encdec_iv
 from curve25519.keys import Private
@@ -131,6 +132,7 @@ class HornetNode(object):
         Process an incoming Hornet packet (:class:`hornet_packet.SetupPacket`
         or :class:`hornet_packet.DataPacket`)
         """
+        assert isinstance(raw_packet, bytes)
         packet_type = get_packet_type(raw_packet) # Fails if type unknown
         if packet_type in HornetPacketType.SETUP_TYPES:
             return self.process_setup_packet(raw_packet)
@@ -142,7 +144,7 @@ class HornetNode(object):
         Process an incoming Hornet setup packet
         (:class:`hornet_packet.SetupPacket`)
         """
-        #TODO:Daniele: implement
+        packet = SetupPacket.parse_bytes_to_packet(raw_packet)
 
     def process_data_packet(self, raw_packet):
         """

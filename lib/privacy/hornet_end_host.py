@@ -217,8 +217,14 @@ def test():
     bwd_pubkeys = fwd_pubkeys[-2::-1]
     bwd_pubkeys.append(source.public)
     session_expiration_time = int(time.time()) + 60
-    source.create_new_session_request(fwd_path, fwd_pubkeys, bwd_path,
-                                      bwd_pubkeys, session_expiration_time)
+    sid, packet = source.create_new_session_request(fwd_path, fwd_pubkeys,
+                                                    bwd_path, bwd_pubkeys,
+                                                    session_expiration_time)
+    raw_packet = packet.pack()
+
+    secret_key = b'2'*32
+    node_1 = HornetNode(secret_key, node_1_private)
+    node_1.process_incoming_packet(raw_packet)
 
 
 if __name__ == "__main__":
