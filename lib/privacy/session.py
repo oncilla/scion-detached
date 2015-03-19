@@ -50,22 +50,26 @@ class SetupPathData(object):
         first packet on the path (source, in case of a forward path,
         destination in case of a backward path)
     :vartype path: list
+    :ivar initial_fs_payload: Initial value of the fs_payload
+    :vartype initial_fs_payload: bytes
     """
 
     def __init__(self, source_private, blinding_factors, shared_sphinx_keys,
-                 path):
+                 path, initial_fs_payload):
         assert (isinstance(source_private, bytes) or
                 isinstance(source_private, Private))
-        for bf in blinding_factors:
-            assert isinstance(bf, Private)
+        for blinding_factor in blinding_factors:
+            assert isinstance(blinding_factor, Private)
         for shared_key in shared_sphinx_keys:
             assert isinstance(shared_key, bytes)
+        assert isinstance(initial_fs_payload, bytes)
         assert len(blinding_factors) == len(shared_sphinx_keys) - 1
         assert len(shared_sphinx_keys) == len(path)
         self.source_private = source_private
         self.blinding_factors = blinding_factors
         self.shared_sphinx_keys = shared_sphinx_keys
         self.path = path
+        self.initial_fs_payload = initial_fs_payload
 
 
 class TransmissionPathData(object):
