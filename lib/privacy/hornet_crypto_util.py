@@ -44,16 +44,6 @@ def generate_initial_fs_payload(shared_sphinx_key, fs_payload_length):
     return aes_instance.encrypt(b'\0'*fs_payload_length)
 
 
-def _derive_fs_key_encdec_key(node_secret_key):
-    """
-    Derive the key for the encryption/decryption of the shared key in the
-    forwarding segment from the secret key (SV) of the node.
-    """
-    assert isinstance(node_secret_key, bytes)
-    return sha256(b"hornet-keyderivation-fs-key-encdec:" +
-                  node_secret_key).digest()
-
-
 def fs_shared_key_encrypt(node_secret_key, fs_shared_key):
     """
     Encrypt the shared key (as first part of a forwarding segment) with the
@@ -62,8 +52,7 @@ def fs_shared_key_encrypt(node_secret_key, fs_shared_key):
     assert isinstance(node_secret_key, bytes)
     assert isinstance(fs_shared_key, bytes)
     assert len(fs_shared_key) == SHARED_KEY_LENGTH
-    aes_instance = AES.new(_derive_fs_key_encdec_key(node_secret_key),
-                           mode=AES.MODE_CBC, IV=ZEROED_IV)
+    aes_instance = AES.new(node_secret_key, mode=AES.MODE_CBC, IV=ZEROED_IV)
     return aes_instance.encrypt(fs_shared_key)
 
 
@@ -75,8 +64,7 @@ def fs_shared_key_decrypt(node_secret_key, encrypted_fs_shared_key):
     assert isinstance(node_secret_key, bytes)
     assert isinstance(encrypted_fs_shared_key, bytes)
     assert len(encrypted_fs_shared_key) == SHARED_KEY_LENGTH
-    aes_instance = AES.new(_derive_fs_key_encdec_key(node_secret_key),
-                           mode=AES.MODE_CBC, IV=ZEROED_IV)
+    aes_instance = AES.new(node_secret_key, mode=AES.MODE_CBC, IV=ZEROED_IV)
     return aes_instance.decrypt(encrypted_fs_shared_key)
 
 
