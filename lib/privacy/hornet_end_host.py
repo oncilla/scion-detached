@@ -29,6 +29,7 @@ from lib.privacy.hornet_packet import compute_fs_payload_size, SetupPacket,\
     HornetPacketType
 from lib.privacy.hornet_crypto_util import generate_initial_fs_payload
 import os
+import time
 
 
 class HornetProcessingResult(object):
@@ -189,7 +190,7 @@ class HornetSource(HornetNode):
 
         # Construct the first setup packet
         #FIXME:Daniele: add end-to-end MAC?
-        payload = bwd_header
+        payload = bwd_header.pack()
         sphinx_packet = (self._sphinx_end_host.
                         construct_forward_packet(payload,
                                                  fwd_shared_sphinx_keys,
@@ -200,3 +201,25 @@ class HornetSource(HornetNode):
                                    self._sphinx_end_host.max_hops)
         return (session_id, setup_packet)
 
+
+def test():
+    private = Private()
+    secret_key = b'1'*32
+    source = HornetSource(secret_key, private)
+
+    fwd_path = [b'1'*16, b'2'*16, b'3'*16]
+    bwd_path = [b'2'*16, b'1'*16, b'source_address00']
+    node_1_private = Private()
+    node_2_private = Private()
+    node_3_private = Private()
+    fwd_privates = [node_1_private, node_2_private, node_3_private]
+    fwd_pubkeys = [p.get_public() for p in fwd_privates]
+    bwd_pubkeys = fwd_pubkeys[-2::-1]
+    bwd_pubkeys.append(source.public)
+    session_expiration_time = int(time.time()) + 60
+    source.create_new_session_request(fwd_path, fwd_pubkeys, bwd_path,
+                                      bwd_pubkeys, session_expiration_time)
+
+
+if __name__ == "__main__":
+    test()
