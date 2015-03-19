@@ -23,7 +23,7 @@ limitations under the License.
 from lib.privacy.sphinx.packet import SphinxPacket, MAC_SIZE,\
     compute_pernode_size, SphinxHeader, DEFAULT_PAYLOAD_LENGTH
 from lib.privacy.common.constants import DEFAULT_MAX_HOPS,\
-    DEFAULT_ADDRESS_LENGTH, GROUP_ELEM_LENGTH
+    DEFAULT_ADDRESS_LENGTH, GROUP_ELEM_LENGTH, LOCALHOST_ADDRESS
 from lib.privacy.common.exception import PacketParsingException
 from curve25519.keys import Private, Public
 from lib.privacy.sphinx.sphinx_crypto_util import verify_mac, derive_mac_key,\
@@ -165,7 +165,7 @@ class SphinxNode(object):
         """
         Return the byte sequence representing the localhost address
         """
-        return b"0" * self.address_length
+        return LOCALHOST_ADDRESS
 
     def get_packet_processing_result(self, packet):
         """

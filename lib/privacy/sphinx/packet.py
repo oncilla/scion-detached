@@ -26,8 +26,6 @@ from curve25519.keys import Public
 
 DEFAULT_PAYLOAD_LENGTH = 512 # Default size of the payload in bytes
 
-DEFAULT_LOCALHOST_ADDRESS = b"0" * DEFAULT_ADDRESS_LENGTH
-
 
 def compute_pernode_size(address_length=DEFAULT_ADDRESS_LENGTH):
     """
