@@ -136,7 +136,7 @@ def verify_mac(mac_key, msg, mac):
     return hmac.compare_digest(mac, recomputed_mac)
 
 
-def stream_cipher_encrypt(stream_key, plaintext):
+def stream_cipher_encrypt(stream_key, plaintext, initial_value=1):
     """
     Encrypt the given plaintext (byte sequence) using a stream cipher.
 
@@ -150,12 +150,15 @@ def stream_cipher_encrypt(stream_key, plaintext):
     """
     assert isinstance(stream_key, bytes)
     assert isinstance(plaintext, bytes)
-    ctr = Counter.new(128)
+    if not isinstance(initial_value, int):
+        assert isinstance(initial_value, bytes)
+        initial_value = int.from_bytes(initial_value, "big")
+    ctr = Counter.new(128, initial_value=initial_value)
     aes_instance = AES.new(stream_key, mode=AES.MODE_CTR, counter=ctr)
     return aes_instance.encrypt(plaintext)
 
 
-def stream_cipher_decrypt(stream_key, ciphertext):
+def stream_cipher_decrypt(stream_key, ciphertext, initial_value=1):
     """
     Decrypt the given ciphertext (byte sequence) using a stream cipher.
 
@@ -169,7 +172,10 @@ def stream_cipher_decrypt(stream_key, ciphertext):
     """
     assert isinstance(stream_key, bytes)
     assert isinstance(ciphertext, bytes)
-    ctr = Counter.new(128)
+    if not isinstance(initial_value, int):
+        assert isinstance(initial_value, bytes)
+        initial_value = int.from_bytes(initial_value, "big")
+    ctr = Counter.new(128, initial_value=initial_value)
     aes_instance = AES.new(stream_key, mode=AES.MODE_CTR, counter=ctr)
     return aes_instance.decrypt(ciphertext)
 
