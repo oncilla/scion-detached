@@ -29,6 +29,8 @@ from curve25519.keys import Private
 import time
 from lib.privacy.sphinx.sphinx_crypto_util import stream_cipher_encrypt,\
     stream_cipher_decrypt
+from lib.privacy.common.exception import PacketParsingException
+from lib.privacy.hornet_processing import HornetProcessingResult
 
 
 class HornetNode(object):
@@ -127,10 +129,17 @@ class HornetNode(object):
         expiration_time = raw[ROUTING_INFO_LENGTH:]
         return (shared_key, routing_info, expiration_time)
 
+    def add_fs_to_fs_payload(self, shared_key, forwarding_segment, fs_payload):
+        """
+        Add a forwarding segment to an FS payload
+        """
+        raise NotImplementedError
+
     def process_incoming_packet(self, raw_packet):
         """
         Process an incoming Hornet packet (:class:`hornet_packet.SetupPacket`
-        or :class:`hornet_packet.DataPacket`)
+        or :class:`hornet_packet.DataPacket`), and return an instance of class
+        :class:`hornet_processing.HornetProcessingResult`.
         """
         assert isinstance(raw_packet, bytes)
         packet_type = get_packet_type(raw_packet) # Fails if type unknown
@@ -142,14 +151,50 @@ class HornetNode(object):
     def process_setup_packet(self, raw_packet):
         """
         Process an incoming Hornet setup packet
-        (:class:`hornet_packet.SetupPacket`)
+        (:class:`hornet_packet.SetupPacket`), and return an instance of class
+        :class:`hornet_processing.HornetProcessingResult`.
         """
-        packet = SetupPacket.parse_bytes_to_packet(raw_packet)
+        try:
+            packet = SetupPacket.parse_bytes_to_packet(raw_packet)
+        except PacketParsingException:
+            return HornetProcessingResult(HornetProcessingResult.Type.INVALID)
+        if packet.expiration_time <= int(time.time()):
+            return HornetProcessingResult(HornetProcessingResult.Type.INVALID)
+        # Process the sphinx packet
+        sphinx_packet = packet.sphinx_packet
+        try:
+            sphinx_processing_result = \
+                self._sphinx_node.get_packet_processing_result(sphinx_packet)
+        except:
+            return HornetProcessingResult(HornetProcessingResult.Type.INVALID)
+        if not sphinx_processing_result.is_to_forward():
+            return HornetProcessingResult(HornetProcessingResult.Type.INVALID)
+        (next_hop, processed_sphinx_packet) = sphinx_processing_result.result
+        # Create new shared_key (forward secrecy) from a new Private
+        tmp_private = Private()
+        shared_key = tmp_private.get_shared_key(sphinx_processing_result
+                                                .source_pubkey)
+        # Add a new FS to the FS payload
+        new_fs = self.create_forwarding_segment(shared_key, next_hop,
+                                                packet.expiration_time)
+        sphinx_shared_key = sphinx_processing_result.shared_key
+        processed_fs_payload = self.add_fs_to_fs_payload(new_fs,
+                                                         sphinx_shared_key,
+                                                         packet.fs_payload)
+        # Create the processed packet
+        processed_packet = SetupPacket(packet.packet_type,
+                                       packet.expiration_time,
+                                       processed_sphinx_packet,
+                                       processed_fs_payload,
+                                       packet.max_hops)
+        return HornetProcessingResult(HornetProcessingResult.Type.FORWARD,
+                                      packet_to_send=processed_packet)
 
     def process_data_packet(self, raw_packet):
         """
         Process an incoming Hornet data packet
-        (:class:`hornet_packet.DataPacket`)
+        (:class:`hornet_packet.DataPacket`), and return an instance of class
+        :class:`hornet_processing.HornetProcessingResult`.
         """
         #TODO:Daniele: implement
 
