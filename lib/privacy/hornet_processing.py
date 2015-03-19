@@ -59,7 +59,7 @@ class HornetProcessingResult(object):
         INVALID = 100
 
         ALL_TYPES = (RECEIVED_DATA, SESSION_REQUEST, SESSION_ESTABLISHED,
-                     SESSION_EXPIRED, INVALID)
+                     SESSION_EXPIRED, FORWARD, INVALID)
 
     def __init__(self, result_type, session_id=None, received_data=None,
                  packet_to_send=None):

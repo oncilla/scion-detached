@@ -30,6 +30,7 @@ from lib.privacy.hornet_packet import compute_fs_payload_size, SetupPacket,\
 from lib.privacy.hornet_crypto_util import generate_initial_fs_payload
 import os
 import time
+from lib.privacy.hornet_processing import HornetProcessingResult
 
 
 class HornetSource(HornetNode):
@@ -175,7 +176,8 @@ def test():
 
     secret_key = b'2'*32
     node_1 = HornetNode(secret_key, node_1_private)
-    node_1.process_incoming_packet(raw_packet)
+    result = node_1.process_incoming_packet(raw_packet)
+    assert result.result_type == HornetProcessingResult.Type.FORWARD
 
 
 if __name__ == "__main__":

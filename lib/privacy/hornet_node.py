@@ -22,13 +22,14 @@ limitations under the License.
 from lib.privacy.sphinx.sphinx_node import SphinxNode
 from lib.privacy.hornet_packet import get_packet_type, HornetPacketType,\
     TIMESTAMP_LENGTH, SHARED_KEY_LENGTH, ROUTING_INFO_LENGTH, FS_LENGTH,\
-    SetupPacket
+    SetupPacket, MAC_SIZE
 from lib.privacy.hornet_crypto_util import fs_shared_key_encrypt,\
-    derive_fs_encdec_key, fs_shared_key_decrypt, generate_fs_encdec_iv
-from curve25519.keys import Private
+    fs_shared_key_decrypt, generate_fs_encdec_iv, derive_fs_payload_stream_key,\
+    derive_fs_payload_mac_key
+from curve25519.keys import Private, Public
 import time
 from lib.privacy.sphinx.sphinx_crypto_util import stream_cipher_encrypt,\
-    stream_cipher_decrypt
+    stream_cipher_decrypt, compute_mac
 from lib.privacy.common.exception import PacketParsingException
 from lib.privacy.hornet_processing import HornetProcessingResult
 
@@ -103,9 +104,8 @@ class HornetNode(object):
         else:
             assert len(expiration_time) == TIMESTAMP_LENGTH
         forwarding_segment = fs_shared_key_encrypt(self.secret_key, shared_key)
-        fs_stream_key = derive_fs_encdec_key(shared_key)
         fs_iv = generate_fs_encdec_iv(shared_key)
-        forwarding_segment += stream_cipher_encrypt(fs_stream_key,
+        forwarding_segment += stream_cipher_encrypt(self.secret_key,
                                                     routing_info +
                                                     expiration_time, fs_iv)
         return forwarding_segment
@@ -120,20 +120,30 @@ class HornetNode(object):
         encrypted_fs_shared_key = forwarding_segment[:SHARED_KEY_LENGTH]
         shared_key = fs_shared_key_decrypt(self.secret_key,
                                            encrypted_fs_shared_key)
-        fs_stream_key = derive_fs_encdec_key(shared_key)
         fs_iv = generate_fs_encdec_iv(shared_key)
-        raw = stream_cipher_decrypt(fs_stream_key,
+        raw = stream_cipher_decrypt(self.secret_key,
                                     forwarding_segment[SHARED_KEY_LENGTH:],
                                     fs_iv)
         routing_info = raw[:ROUTING_INFO_LENGTH]
         expiration_time = raw[ROUTING_INFO_LENGTH:]
         return (shared_key, routing_info, expiration_time)
 
-    def add_fs_to_fs_payload(self, shared_key, forwarding_segment, fs_payload):
+    @staticmethod
+    def add_fs_to_fs_payload(sphinx_shared_key, forwarding_segment,
+                             tmp_pubkey, fs_payload):
         """
         Add a forwarding segment to an FS payload
         """
-        raise NotImplementedError
+        fs_and_pubkey = forwarding_segment + tmp_pubkey
+        added_size = len(fs_and_pubkey) + MAC_SIZE
+        # Add FS and tmp_pubkey to fs_payload and encrypt it
+        tmp_payload = fs_and_pubkey + fs_payload[:-added_size]
+        stream_key = derive_fs_payload_stream_key(sphinx_shared_key)
+        tmp_payload = stream_cipher_encrypt(stream_key, tmp_payload)
+        # Compute MAC over new FS payload and prepend it to the payload
+        mac_key = derive_fs_payload_mac_key(sphinx_shared_key)
+        mac = compute_mac(mac_key, tmp_payload)
+        return mac + tmp_payload
 
     def process_incoming_packet(self, raw_packet):
         """
@@ -172,21 +182,24 @@ class HornetNode(object):
         (next_hop, processed_sphinx_packet) = sphinx_processing_result.result
         # Create new shared_key (forward secrecy) from a new Private
         tmp_private = Private()
-        shared_key = tmp_private.get_shared_key(sphinx_processing_result
-                                                .source_pubkey)
+        source_public = Public(sphinx_processing_result.source_pubkey)
+        long_shared_key = tmp_private.get_shared_key(source_public)
+        shared_key = long_shared_key[:SHARED_KEY_LENGTH]
         # Add a new FS to the FS payload
         new_fs = self.create_forwarding_segment(shared_key, next_hop,
                                                 packet.expiration_time)
+        tmp_pubkey = tmp_private.get_public().serialize()
         sphinx_shared_key = sphinx_processing_result.shared_key
-        processed_fs_payload = self.add_fs_to_fs_payload(new_fs,
-                                                         sphinx_shared_key,
+        processed_fs_payload = self.add_fs_to_fs_payload(sphinx_shared_key,
+                                                         new_fs,
+                                                         tmp_pubkey,
                                                          packet.fs_payload)
         # Create the processed packet
         processed_packet = SetupPacket(packet.packet_type,
                                        packet.expiration_time,
                                        processed_sphinx_packet,
                                        processed_fs_payload,
-                                       packet.max_hops)
+                                       packet.max_hops).pack()
         return HornetProcessingResult(HornetProcessingResult.Type.FORWARD,
                                       packet_to_send=processed_packet)
 

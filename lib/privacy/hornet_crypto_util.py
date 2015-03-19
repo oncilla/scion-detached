@@ -29,12 +29,24 @@ from lib.privacy.hornet_packet import SHARED_KEY_LENGTH
 ZEROED_IV = b'\0'*AES.block_size
 
 
-def derive_fs_encdec_key(shared_key):
+def derive_fs_payload_stream_key(sphinx_shared_key):
     """
-    Derive the key for the stream cipher from the shared key.
+    Derive the key for the stream cipher from the shared key (sphinx), which
+    will be used to process the FS payload.
     """
-    assert isinstance(shared_key, bytes)
-    return sha256(b"hornet-keyderivation-fs-encdec:"+shared_key).digest()
+    assert isinstance(sphinx_shared_key, bytes)
+    return sha256(b"hornet-keyderivation-fs-payload-stream:" +
+                  sphinx_shared_key).digest()
+
+
+def derive_fs_payload_mac_key(sphinx_shared_key):
+    """
+    Derive the key for the mac from the shared key (sphinx), which will be used
+    to authenticate the updated FS payload.
+    """
+    assert isinstance(sphinx_shared_key, bytes)
+    return sha256(b"hornet-keyderivation-fs-payload-mac:" +
+                  sphinx_shared_key).digest()
 
 
 def generate_initial_fs_payload(shared_sphinx_key, fs_payload_length):
