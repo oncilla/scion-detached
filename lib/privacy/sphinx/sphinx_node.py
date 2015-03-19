@@ -57,9 +57,14 @@ class ProcessingResult(object):
         AT_DESTINATION = 1
         DROP = 2
 
-    def __init__(self, result_type, result=None):
+    def __init__(self, result_type, result=None, reply_id=None):
         self.result_type = result_type
         self.result = result
+        #FIXME:Daniele: The reply_id attribute was added for the case of
+        # incoming replies, where a source needs to be able to recognize what
+        # reply it received. This id can be e.g. the last dh_pubkey, that the
+        # source receives, since this value is returned by compute_shared_keys
+        self.reply_id = reply_id
 
     def is_failure(self):
         """
