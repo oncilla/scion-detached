@@ -24,7 +24,7 @@ from lib.privacy.sphinx.packet import SphinxPacket, MAC_SIZE,\
     compute_pernode_size, SphinxHeader
 from lib.privacy.sphinx.packet import DEFAULT_MAX_HOPS,\
     DEFAULT_ADDRESS_LENGTH, DEFAULT_GROUP_ELEM_LENGTH, DEFAULT_PAYLOAD_LENGTH
-from lib.privacy.sphinx.exception import PacketParsingException
+from lib.privacy.common.exception import PacketParsingException
 from curve25519.keys import Private, Public
 from lib.privacy.sphinx.sphinx_crypto_util import verify_mac, derive_mac_key,\
     derive_stream_key, stream_cipher_decrypt, derive_prp_key,\

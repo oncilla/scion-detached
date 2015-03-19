@@ -32,7 +32,7 @@ import os
 from lib.crypto.prp import prp_encrypt, BLOCK_SIZE, prp_decrypt
 from curve25519.keys import Private, Public
 import curve25519.keys
-from lib.privacy.sphinx.exception import PacketParsingException
+from lib.privacy.common.exception import PacketParsingException
 
 
 def compute_shared_keys(source_private, nodes_pubkeys):

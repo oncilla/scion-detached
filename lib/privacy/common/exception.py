@@ -1,8 +1,8 @@
 """
-:mod:`exception` --- Sphinx exceptions
-======================================
+:mod:`exception` --- Exceptions of the privacy package
+======================================================
 
-This module defines the exceptions for the sphinx package.
+This module defines the exceptions for the privacy package.
 
 Copyright 2014 ETH Zurich
 
@@ -21,6 +21,6 @@ limitations under the License.
 
 class PacketParsingException(Exception):
     """
-    A generic exception in the processing of a Sphinx packet
+    A generic exception in the processing of a packet
     """
     pass

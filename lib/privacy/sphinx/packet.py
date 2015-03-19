@@ -19,7 +19,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 #TODO/dasoni: add Sphinx reference
-from lib.privacy.sphinx.exception import PacketParsingException
+from lib.privacy.common.exception import PacketParsingException
 from curve25519.keys import Public
 
 # Default maximum number of hops on a path, including the destination
