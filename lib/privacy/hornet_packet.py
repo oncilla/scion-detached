@@ -22,6 +22,7 @@ limitations under the License.
 
 import lib.privacy.sphinx.packet as sphinx_packet_mod
 from lib.privacy.sphinx.packet import SphinxHeader, SphinxPacket
+from lib.privacy.common.exception import PacketParsingException
 
 MAX_HOPS_LENGTH = 1 # Number of bytes needed for the max_hops field
 NONCE_LENGTH = 4 # Size of a nonce in bytes
@@ -183,6 +184,8 @@ class SetupPacket(object):
         max_hops_index = HornetPacketType.length()
         timestamp_index = max_hops_index + MAX_HOPS_LENGTH
         sphinx_packet_index = timestamp_index + TIMESTAMP_LENGTH
+        if len(raw) < sphinx_packet_index:
+            raise PacketParsingException("Setup packet is too small")
 
         packet_type = HornetPacketType.from_bytes(raw[:max_hops_index])
         max_hops = int.from_bytes(raw[max_hops_index:timestamp_index], "big")
@@ -190,6 +193,8 @@ class SetupPacket(object):
                                              sphinx_packet_index], "big")
 
         fs_payload_index = -compute_fs_payload_size(max_hops=max_hops)
+        if len(raw) < sphinx_packet_index + (-fs_payload_index):
+            raise PacketParsingException("Setup packet is too small")
         kwargs["max_hops"] = max_hops
         sphinx_packet = SphinxPacket.parse_bytes_to_packet(
             raw[sphinx_packet_index:fs_payload_index], **kwargs)
