@@ -20,7 +20,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 from lib.privacy.sphinx.sphinx_node import SphinxNode
-from lib.privacy.hornet_packet import get_packet_type, HornetPacketType
+from lib.privacy.hornet_packet import get_packet_type, HornetPacketType,\
+    TIMESTAMP_LENGTH, SHARED_KEY_LENGTH, ROUTING_INFO_LENGTH, FS_LENGTH
+from lib.privacy.hornet_crypto_util import fs_shared_key_encrypt,\
+    derive_fs_encdec_key, fs_shared_key_decrypt, generate_fs_encdec_iv
+from curve25519.keys import Private
+import time
+from lib.privacy.sphinx.sphinx_crypto_util import stream_cipher_encrypt,\
+    stream_cipher_decrypt
 
 
 class HornetNode(object):
@@ -78,18 +85,53 @@ class HornetNode(object):
         raise TypeError("Cannot assign directly to public property, "
                         "assign to private property instead")
 
-    def create_forwarding_segment(self, routing_info, expiration_time):
+    def create_forwarding_segment(self, shared_key, routing_info,
+                                  expiration_time):
         """
         Create a forwarding segment (to be added to the FS payload)
         """
-        #TODO:Daniele: implement
+        assert isinstance(shared_key, bytes)
+        assert len(shared_key) == SHARED_KEY_LENGTH
+        assert isinstance(routing_info, bytes)
+        assert len(routing_info) == ROUTING_INFO_LENGTH
+        if not isinstance(expiration_time, bytes):
+            assert isinstance(expiration_time, int)
+            expiration_time = expiration_time.to_bytes(TIMESTAMP_LENGTH, "big")
+        else:
+            assert len(expiration_time) == TIMESTAMP_LENGTH
+        forwarding_segment = fs_shared_key_encrypt(self.secret_key, shared_key)
+        fs_stream_key = derive_fs_encdec_key(shared_key)
+        fs_iv = generate_fs_encdec_iv(shared_key)
+        forwarding_segment += stream_cipher_encrypt(fs_stream_key,
+                                                    routing_info +
+                                                    expiration_time, fs_iv)
+        return forwarding_segment
+
+    def decrypt_forwarding_segment(self, forwarding_segment):
+        """
+        Decrypt a forwarding segment and return the data it contained, which
+        will be a tuple of the form (shared_key, routing_info, expiration_time)
+        """
+        assert isinstance(forwarding_segment, bytes)
+        assert len(forwarding_segment) == FS_LENGTH
+        encrypted_fs_shared_key = forwarding_segment[:SHARED_KEY_LENGTH]
+        shared_key = fs_shared_key_decrypt(self.secret_key,
+                                           encrypted_fs_shared_key)
+        fs_stream_key = derive_fs_encdec_key(shared_key)
+        fs_iv = generate_fs_encdec_iv(shared_key)
+        raw = stream_cipher_decrypt(fs_stream_key,
+                                    forwarding_segment[SHARED_KEY_LENGTH:],
+                                    fs_iv)
+        routing_info = raw[:ROUTING_INFO_LENGTH]
+        expiration_time = raw[ROUTING_INFO_LENGTH:]
+        return (shared_key, routing_info, expiration_time)
 
     def process_incoming_packet(self, raw_packet):
         """
         Process an incoming Hornet packet (:class:`hornet_packet.SetupPacket`
         or :class:`hornet_packet.DataPacket`)
         """
-        packet_type = get_packet_type(raw_packet)
+        packet_type = get_packet_type(raw_packet) # Fails if type unknown
         if packet_type in HornetPacketType.SETUP_TYPES:
             return self.process_setup_packet(raw_packet)
         else:
@@ -109,3 +151,21 @@ class HornetNode(object):
         """
         #TODO:Daniele: implement
 
+
+def test():
+    private = Private()
+    secret_key = b'1'*32
+    node = HornetNode(secret_key, private)
+
+    shared_key = b'2'*16
+    routing_info = b'3'*ROUTING_INFO_LENGTH
+    expiration_time = int(time.time()).to_bytes(TIMESTAMP_LENGTH, "big")
+    forwarding_segment = node.create_forwarding_segment(shared_key,
+                                                        routing_info,
+                                                        expiration_time)
+    dec_tuple = node.decrypt_forwarding_segment(forwarding_segment)
+    assert dec_tuple == (shared_key, routing_info, expiration_time)
+
+
+if __name__ == "__main__":
+    test()

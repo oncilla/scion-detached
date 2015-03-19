@@ -29,6 +29,14 @@ from lib.privacy.hornet_packet import SHARED_KEY_LENGTH
 ZEROED_IV = b'\0'*AES.block_size
 
 
+def derive_fs_encdec_key(shared_key):
+    """
+    Derive the key for the stream cipher from the shared key.
+    """
+    assert isinstance(shared_key, bytes)
+    return sha256(b"hornet-keyderivation-fs-encdec:"+shared_key).digest()
+
+
 def generate_initial_fs_payload(shared_sphinx_key, fs_payload_length):
     """
     Works as PRG keyed with the input shared_sphinx_key, outputting a
@@ -42,6 +50,15 @@ def generate_initial_fs_payload(shared_sphinx_key, fs_payload_length):
     ctr = Counter.new(128)
     aes_instance = AES.new(prg_key, mode=AES.MODE_CTR, counter=ctr)
     return aes_instance.encrypt(b'\0'*fs_payload_length)
+
+
+def generate_fs_encdec_iv(shared_key):
+    """
+    Generate the initialization vector (IV) to the encryption/decryption of the
+    data in a forwarding segment.
+    """
+    hash_object = sha256(b"hornet-ivderivation-fs-encdec-iv:"+shared_key)
+    return hash_object.digest()[0:16]
 
 
 def fs_shared_key_encrypt(node_secret_key, fs_shared_key):
