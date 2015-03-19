@@ -26,6 +26,7 @@ from Crypto.Cipher import AES
 from Crypto.Util import Counter
 from hashlib import sha256
 import hmac
+from lib.privacy.common.constants import MAC_SIZE
 
 
 BLOCK_SIZE = AES.block_size
@@ -99,18 +100,18 @@ def derive_prp_key(shared_key):
 
 def compute_mac(mac_key, msg):
     """
-    Computes a 32 byte MAC (Message Authentication Code) over a message.
+    Computes a MAC (Message Authentication Code) over a message.
 
     :param mac_key: the secret key for the MAC computation
     :type mac_key: bytes
     :param msg: the message over which the MAC is computed
     :type msg: bytes or str
-    :returns: a 32 bytes MAC
+    :returns: a MAC
     :rtype: bytes
     """
     assert isinstance(mac_key, bytes)
     digester = hmac.new(mac_key, msg, sha256)
-    return digester.digest()
+    return digester.digest()[:MAC_SIZE]
 
 
 def verify_mac(mac_key, msg, mac):
@@ -130,9 +131,9 @@ def verify_mac(mac_key, msg, mac):
     """
     assert isinstance(mac_key, bytes)
     assert isinstance(mac, bytes)
-    assert len(mac) == 32
+    assert len(mac) == MAC_SIZE
     digester = hmac.new(mac_key, msg, sha256)
-    recomputed_mac = digester.digest()
+    recomputed_mac = digester.digest()[:MAC_SIZE]
     return hmac.compare_digest(mac, recomputed_mac)
 
 
@@ -211,7 +212,7 @@ def test():
     mac_key = derive_mac_key(shared_key)
     stream_key = derive_stream_key(shared_key)
     prp_key = derive_stream_key(shared_key)
-    assert len(mac_key) == 32
+    assert len(mac_key) == MAC_SIZE
     assert len(stream_key) == 32
     assert len(prp_key) == 32
 

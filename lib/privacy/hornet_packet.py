@@ -23,14 +23,11 @@ limitations under the License.
 import lib.privacy.sphinx.packet as sphinx_packet_mod
 from lib.privacy.sphinx.packet import SphinxHeader, SphinxPacket
 from lib.privacy.common.exception import PacketParsingException
+from lib.privacy.common.constants import DEFAULT_MAX_HOPS, MAC_SIZE,\
+    GROUP_ELEM_LENGTH, DEFAULT_ADDRESS_LENGTH
 
 MAX_HOPS_LENGTH = 1 # Number of bytes needed for the max_hops field
 NONCE_LENGTH = 4 # Size of a nonce in bytes
-# Default maximum number of hops on a path, including the destination
-DEFAULT_MAX_HOPS = 8
-MAC_SIZE = 32 # Size of a Message Authentication Code in bytes
-# Default size of a group element (for Diffie-Hellman) in bytes
-GROUP_ELEM_LENGTH = 32
 # Length of the shared key between a source and a node
 SHARED_KEY_LENGTH = 16
 ROUTING_INFO_LENGTH = 16
@@ -333,10 +330,11 @@ class DataPacket(object):
 
 
 def test_setup(max_hops=DEFAULT_MAX_HOPS):
-    dh_pubkey_0 = b'1'*sphinx_packet_mod.DEFAULT_GROUP_ELEM_LENGTH
+    dh_pubkey_0 = b'1'*GROUP_ELEM_LENGTH
     mac_0 = b'2'*MAC_SIZE
-    blinded_header = b'3'*sphinx_packet_mod.compute_blinded_header_size(max_hops=max_hops)
-    first_hop = b'4'*sphinx_packet_mod.DEFAULT_ADDRESS_LENGTH
+    blinded_header = b'3'*sphinx_packet_mod.compute_blinded_header_size(
+                                                max_hops=max_hops)
+    first_hop = b'4'*DEFAULT_ADDRESS_LENGTH
     sphinx_payload = b'5'*sphinx_packet_mod.DEFAULT_PAYLOAD_LENGTH
     sphinx_header = SphinxHeader(dh_pubkey_0, mac_0, blinded_header, first_hop)
     sphinx_packet = SphinxPacket(sphinx_header, sphinx_payload)

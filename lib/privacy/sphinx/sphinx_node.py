@@ -21,9 +21,9 @@ limitations under the License.
 """
 #TODO/dasoni: add Sphinx reference
 from lib.privacy.sphinx.packet import SphinxPacket, MAC_SIZE,\
-    compute_pernode_size, SphinxHeader
-from lib.privacy.sphinx.packet import DEFAULT_MAX_HOPS,\
-    DEFAULT_ADDRESS_LENGTH, DEFAULT_GROUP_ELEM_LENGTH, DEFAULT_PAYLOAD_LENGTH
+    compute_pernode_size, SphinxHeader, DEFAULT_PAYLOAD_LENGTH
+from lib.privacy.common.constants import DEFAULT_MAX_HOPS,\
+    DEFAULT_ADDRESS_LENGTH, GROUP_ELEM_LENGTH
 from lib.privacy.common.exception import PacketParsingException
 from curve25519.keys import Private, Public
 from lib.privacy.sphinx.sphinx_crypto_util import verify_mac, derive_mac_key,\
@@ -123,7 +123,7 @@ class SphinxNode(object):
                 "public and private keys do not match")
         self.max_hops = DEFAULT_MAX_HOPS
         self.address_length = DEFAULT_ADDRESS_LENGTH
-        self.group_elem_length = DEFAULT_GROUP_ELEM_LENGTH
+        self.group_elem_length = GROUP_ELEM_LENGTH
         self.payload_length = DEFAULT_PAYLOAD_LENGTH
 
     @property

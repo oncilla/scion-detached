@@ -20,15 +20,11 @@ limitations under the License.
 """
 #TODO/dasoni: add Sphinx reference
 from lib.privacy.common.exception import PacketParsingException
+from lib.privacy.common.constants import DEFAULT_ADDRESS_LENGTH, MAC_SIZE,\
+    DEFAULT_MAX_HOPS, GROUP_ELEM_LENGTH
 from curve25519.keys import Public
 
-# Default maximum number of hops on a path, including the destination
-DEFAULT_MAX_HOPS = 8
-DEFAULT_ADDRESS_LENGTH = 16 # Default size of a node's address/name in bytes
-# Default size of a group element (for Diffie-Hellman) in bytes
-DEFAULT_GROUP_ELEM_LENGTH = 32
 DEFAULT_PAYLOAD_LENGTH = 512 # Default size of the payload in bytes
-MAC_SIZE = 32 # Size of a Message Authentication Code in bytes
 
 DEFAULT_LOCALHOST_ADDRESS = b"0" * DEFAULT_ADDRESS_LENGTH
 
@@ -49,7 +45,7 @@ def compute_blinded_header_size(max_hops=DEFAULT_MAX_HOPS,
 
 def compute_header_size(max_hops=DEFAULT_MAX_HOPS,
               address_length=DEFAULT_ADDRESS_LENGTH,
-              group_elem_length=DEFAULT_GROUP_ELEM_LENGTH):
+              group_elem_length=GROUP_ELEM_LENGTH):
     """
     Compute the size in bytes of a header.
     """
@@ -88,7 +84,7 @@ class SphinxHeader(object):
     @classmethod
     def parse_bytes_to_header(cls, raw, max_hops=DEFAULT_MAX_HOPS,
               address_length=DEFAULT_ADDRESS_LENGTH,
-              group_elem_length=DEFAULT_GROUP_ELEM_LENGTH):
+              group_elem_length=GROUP_ELEM_LENGTH):
         """
         Parses the raw data and creates a SphinxHeader.
 
@@ -147,7 +143,7 @@ class SphinxPacket(object):
     @classmethod
     def parse_bytes_to_packet(cls, raw, max_hops=DEFAULT_MAX_HOPS,
               address_length=DEFAULT_ADDRESS_LENGTH,
-              group_elem_length=DEFAULT_GROUP_ELEM_LENGTH,
+              group_elem_length=GROUP_ELEM_LENGTH,
               payload_length=DEFAULT_PAYLOAD_LENGTH):
         """
         Parses the raw data and creates a SphinxPacket.
@@ -190,7 +186,7 @@ class SphinxPacket(object):
 
 
 def test():
-    dh_pubkey_0 = b'1'*DEFAULT_GROUP_ELEM_LENGTH
+    dh_pubkey_0 = b'1'*GROUP_ELEM_LENGTH
     mac_0 = b'2'*MAC_SIZE
     blinded_header = b'3'*compute_blinded_header_size()
     first_hop = b'4'*DEFAULT_ADDRESS_LENGTH
