@@ -20,7 +20,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 from lib.privacy.hornet_node import HornetNode
-from lib.privacy.sphinx.sphinx_end_host import SphinxEndHost
+from lib.privacy.sphinx.sphinx_end_host import SphinxEndHost,\
+    compute_shared_keys
+import uuid
+from curve25519.keys import Private
+from lib.privacy.session import SetupPathData, SessionRequestInfo
 
 
 class HornetProcessingResult(object):
@@ -89,13 +93,94 @@ class HornetSource(HornetNode):
         assert isinstance(secret_key, bytes)
         self._sphinx_end_host = SphinxEndHost(private, public)
         super().__init__(secret_key, sphinx_node=self._sphinx_end_host)
-        self._incomplete_sessions = dict()
+        self._session_requests_by_reply_id = dict()
+        self._session_requests_by_session_id = dict()
         self._open_sessions = dict()
 
+    def add_session_request_info(self, session_request_info):
+        """
+        Store a :class:`session.SessionRequestInfo` instance for a new session
+        request.
+        """
+        assert isinstance(session_request_info, SessionRequestInfo)
+        self._session_requests_by_session_id[session_request_info.session_id]\
+            = session_request_info
+        self._session_requests_by_reply_id[session_request_info.reply_id]\
+            = session_request_info
+
+    def remove_session_request_info(self, session_id=None, reply_id=None):
+        """
+        Store a :class:`session.SessionRequestInfo` instance for a new session
+        request.
+        """
+        assert [session_id, reply_id].count(None) == 1
+        if session_id in self._session_requests_by_session_id:
+            reply_id = (self._session_requests_by_session_id[session_id]
+                        .reply_id)
+        elif reply_id in self._session_requests_by_reply_id:
+            session_id = (self._session_requests_by_reply_id[reply_id]
+                        .session_id)
+        else:
+            return # session_id already deleted
+        del self._session_requests_by_session_id[session_id]
+        del self._session_requests_by_reply_id[reply_id]
+
     def create_new_session_request(self, fwd_path, fwd_pubkeys, bwd_path,
-                                   bwd_pubkeys):
+                                   bwd_pubkeys, valid_for_seconds = None):
         """
-        Construct the first packet of the setup, and store in information about
+        Construct the first packet of the setup, and store information about
         the session request, returning a request_id referring to it.
+
+        :returns: a tuple containing a new session identifier and the first
+            packet that needs to be sent out: (session_id, first_packet)
         """
+        assert len(fwd_path) == len(fwd_pubkeys)
+        assert len(bwd_path) == len(bwd_pubkeys)
+        # pylint: disable=no-member
+        session_id = uuid.uuid4().int
+        # pylint: enable=no-member
+
+        #FIXME:Daniele: Add MAC extension for sphinx headers so that
+        #   the per-hop MACs cover also Hornet's expiration time (EXP)
+        # Construct SphinxHeader and SetupPathData for forward path
+        source_tmp_private = Private()
+        source_tmp_pubkey = source_tmp_private.get_public().serialize()
+        fwd_shared_sphinx_keys, blinding_factors, _ = \
+            compute_shared_keys(source_tmp_private, fwd_pubkeys)
+        fwd_header = (self._sphinx_end_host.
+                      construct_header(fwd_shared_sphinx_keys,
+                                       source_tmp_pubkey, fwd_path))
+        fwd_path_data = SetupPathData(source_tmp_private, blinding_factors,
+                                      fwd_shared_sphinx_keys, fwd_path)
+
+        # Construct SphinxHeader and SetupPathData for backward path
+        source_tmp_private = Private()
+        source_tmp_pubkey = source_tmp_private.get_public().serialize()
+        bwd_shared_sphinx_keys, blinding_factors, final_dh_pubkey = \
+            compute_shared_keys(source_tmp_private, bwd_pubkeys)
+        bwd_header = (self._sphinx_end_host.
+                      construct_header(bwd_shared_sphinx_keys,
+                                       source_tmp_pubkey, bwd_path))
+        bwd_path_data = SetupPathData(source_tmp_private, blinding_factors,
+                                      bwd_shared_sphinx_keys, bwd_path)
+        destination_shared_key = fwd_shared_sphinx_keys[-1]
+        self._sphinx_end_host.add_expected_reply(final_dh_pubkey,
+                                                 bwd_shared_sphinx_keys,
+                                                 destination_shared_key)
+
+        # Construct new SessionRequestInfo object and store it
+        reply_id = final_dh_pubkey
+        session_request_info = SessionRequestInfo(session_id, fwd_path_data,
+                                                  bwd_path_data, reply_id,
+                                                  valid_for_seconds)
+        self.add_session_request_info(session_request_info)
+
+        # Construct the first setup packet
+        #FIXME:Daniele: add end-to-end MAC?
+        payload = bwd_header
+        setup_packet = (self._sphinx_end_host.
+                        construct_forward_packet(payload,
+                                                 fwd_shared_sphinx_keys,
+                                                 fwd_header))
+        return (session_id, setup_packet)
 
