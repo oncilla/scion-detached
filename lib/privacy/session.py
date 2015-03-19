@@ -37,9 +37,12 @@ class SetupPathData(object):
     Data structure containing information related to a path (forward or
     backward) for a session establishment attempt.
 
-    :ivar source_privates: Temporary private keys of the source (one per node on
-        the path)
-    :vartype source_privates: list
+    :ivar source_private: First temporary private key of the source
+        (the one for the first hop node)
+    :vartype source_private: :class:`curve25519.key.Private`
+    :ivar blinding_factors: Blinding factors to compute the temporary private
+        keys of the source for the hops following the first.
+    :ivar blinding_factors: list
     :ivar shared_sphinx_keys: Shared keys for the Sphinx setup
     :vartype shared_sphinx_keys: list
     :ivar path: List of nodes (addresses/routing info) on the path, where the
@@ -49,14 +52,18 @@ class SetupPathData(object):
     :vartype path: list
     """
 
-    def __init__(self, source_privates, shared_sphinx_keys, path):
-        for private in source_privates:
-            assert isinstance(private, bytes) or isinstance(private, Private)
+    def __init__(self, source_private, blinding_factors, shared_sphinx_keys,
+                 path):
+        assert (isinstance(source_private, bytes) or
+                isinstance(source_private, Private))
+        for bf in blinding_factors:
+            assert isinstance(bf, Private)
         for shared_key in shared_sphinx_keys:
             assert isinstance(shared_key, bytes)
-        assert len(source_privates) == len(shared_sphinx_keys)
-        assert len(source_privates) == len(path)
-        self.source_privates = source_privates
+        assert len(blinding_factors) == len(shared_sphinx_keys) - 1
+        assert len(shared_sphinx_keys) == len(path)
+        self.source_private = source_private
+        self.blinding_factors = blinding_factors
         self.shared_sphinx_keys = shared_sphinx_keys
         self.path = path
 
@@ -98,6 +105,8 @@ class SessionRequestInfo(object):
     :vartype forward_path_data: :class:`SetupPathData`
     :ivar backward_path_data: Data about the backward path
     :vartype backward_path_data: :class:`SetupPathData`
+    :ivar reply_id: identifier for the sphinx reply
+    :vartype reply_id: bytes or int or string
     :ivar time_created: timestamp indicating the time when the request was
         created
     :vartype time_created: int
@@ -107,7 +116,7 @@ class SessionRequestInfo(object):
     """
 
     def __init__(self, session_id, forward_path_data, backward_path_data,
-                 valid_for_seconds=None):
+                 reply_id, valid_for_seconds=None):
         assert isinstance(session_id, int)
         assert isinstance(forward_path_data, SetupPathData)
         assert isinstance(backward_path_data, SetupPathData)
@@ -124,6 +133,7 @@ class SessionRequestInfo(object):
         self.session_id = session_id
         self.forward_path_data = forward_path_data
         self.backward_path_data = backward_path_data
+        self.reply_id = reply_id
         self.time_created = int(time.time())
         self.expiration_time = self.time_created + valid_for_seconds
 
