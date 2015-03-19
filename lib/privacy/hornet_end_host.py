@@ -25,6 +25,9 @@ from lib.privacy.sphinx.sphinx_end_host import SphinxEndHost,\
 import uuid
 from curve25519.keys import Private
 from lib.privacy.session import SetupPathData, SessionRequestInfo
+from lib.privacy.hornet_packet import compute_fs_payload_size
+from lib.privacy.hornet_crypto_util import generate_initial_fs_payload
+import os
 
 
 class HornetProcessingResult(object):
@@ -139,6 +142,8 @@ class HornetSource(HornetNode):
         # pylint: disable=no-member
         session_id = uuid.uuid4().int
         # pylint: enable=no-member
+        fs_payload_length = compute_fs_payload_size(self._sphinx_end_host.
+                                                  max_hops)
 
         #FIXME:Daniele: Add MAC extension for sphinx headers so that
         #   the per-hop MACs cover also Hornet's expiration time (EXP)
@@ -150,8 +155,11 @@ class HornetSource(HornetNode):
         fwd_header = (self._sphinx_end_host.
                       construct_header(fwd_shared_sphinx_keys,
                                        source_tmp_pubkey, fwd_path))
+        fwd_initial_fs_payload = os.urandom(fs_payload_length)
         fwd_path_data = SetupPathData(source_tmp_private, blinding_factors,
-                                      fwd_shared_sphinx_keys, fwd_path)
+                                      fwd_shared_sphinx_keys, fwd_path,
+                                      fwd_initial_fs_payload)
+        dest_shared_key = fwd_shared_sphinx_keys[-1]
 
         # Construct SphinxHeader and SetupPathData for backward path
         source_tmp_private = Private()
@@ -161,12 +169,14 @@ class HornetSource(HornetNode):
         bwd_header = (self._sphinx_end_host.
                       construct_header(bwd_shared_sphinx_keys,
                                        source_tmp_pubkey, bwd_path))
+        bwd_initial_fs_payload = generate_initial_fs_payload(dest_shared_key,
+                                                             fs_payload_length)
         bwd_path_data = SetupPathData(source_tmp_private, blinding_factors,
-                                      bwd_shared_sphinx_keys, bwd_path)
-        destination_shared_key = fwd_shared_sphinx_keys[-1]
+                                      bwd_shared_sphinx_keys, bwd_path,
+                                      bwd_initial_fs_payload)
         self._sphinx_end_host.add_expected_reply(final_dh_pubkey,
                                                  bwd_shared_sphinx_keys,
-                                                 destination_shared_key)
+                                                 dest_shared_key)
 
         # Construct new SessionRequestInfo object and store it
         reply_id = final_dh_pubkey
@@ -178,9 +188,10 @@ class HornetSource(HornetNode):
         # Construct the first setup packet
         #FIXME:Daniele: add end-to-end MAC?
         payload = bwd_header
-        setup_packet = (self._sphinx_end_host.
+        sphinx_packet = (self._sphinx_end_host.
                         construct_forward_packet(payload,
                                                  fwd_shared_sphinx_keys,
                                                  fwd_header))
+        setup_packet = None #FIXME: continue implementation
         return (session_id, setup_packet)
 
