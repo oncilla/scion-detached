@@ -212,7 +212,7 @@ def test():
     mac_key = derive_mac_key(shared_key)
     stream_key = derive_stream_key(shared_key)
     prp_key = derive_stream_key(shared_key)
-    assert len(mac_key) == MAC_SIZE
+    assert len(mac_key) == 32
     assert len(stream_key) == 32
     assert len(prp_key) == 32
 
