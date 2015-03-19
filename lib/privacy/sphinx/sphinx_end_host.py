@@ -283,7 +283,7 @@ class SphinxEndHost(SphinxNode):
             payload = prp_encrypt(prp_key, payload)
         payload = prp_decrypt(derive_prp_key(destination_shared_key), payload)
         return ProcessingResult(ProcessingResult.Type.AT_DESTINATION,
-                                payload, header.dh_pubkey_0)
+                                result=payload, reply_id=header.dh_pubkey_0)
 
     @staticmethod
     def get_message_from_payload(payload):

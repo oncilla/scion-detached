@@ -57,9 +57,13 @@ class ProcessingResult(object):
         AT_DESTINATION = 1
         DROP = 2
 
-    def __init__(self, result_type, result=None, reply_id=None):
+    def __init__(self, result_type, result=None, reply_id=None,
+                 shared_key=None, source_pubkey=None):
         self.result_type = result_type
         self.result = result
+        #FIXME:Daniele: Add to documentation
+        self.shared_key = shared_key
+        self.source_pubkey = source_pubkey
         #FIXME:Daniele: The reply_id attribute was added for the case of
         # incoming replies, where a source needs to be able to recognize what
         # reply it received. This id can be e.g. the last dh_pubkey, that the
@@ -198,7 +202,9 @@ class SphinxNode(object):
         next_hop = decrypted_header[:self.address_length]
         if next_hop == self.get_localhost_address():
             return ProcessingResult(ProcessingResult.Type.AT_DESTINATION,
-                                    payload)
+                                    result=payload,
+                                    shared_key=shared_key,
+                                    source_pubkey=header.dh_pubkey_0)
         # Construct the next header
         next_mac = decrypted_header[self.address_length:
                                     self.address_length+MAC_SIZE]
@@ -212,7 +218,9 @@ class SphinxNode(object):
         # Construct the next packet
         next_packet = SphinxPacket(next_header, payload)
         return ProcessingResult(ProcessingResult.Type.FORWARD,
-                                (next_hop, next_packet))
+                                result=(next_hop, next_packet),
+                                shared_key=shared_key,
+                                source_pubkey=header.dh_pubkey_0)
 
     def construct_reply_packet(self, message, shared_key, header):
         """
