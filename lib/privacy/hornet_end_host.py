@@ -26,16 +26,27 @@ import uuid
 from curve25519.keys import Private, Public
 from lib.privacy.session import SetupPathData, SessionRequestInfo
 from lib.privacy.hornet_packet import compute_fs_payload_size, SetupPacket,\
-    HornetPacketType, SHARED_KEY_LENGTH
-from lib.privacy.hornet_crypto_util import generate_initial_fs_payload
+    HornetPacketType, SHARED_KEY_LENGTH, FS_LENGTH
+from lib.privacy.hornet_crypto_util import generate_initial_fs_payload,\
+    derive_fs_payload_stream_key, derive_fs_payload_mac_key
 import os
 import time
 from lib.privacy.hornet_processing import HornetProcessingResult
 from lib.privacy.common.exception import PacketParsingException
 from lib.privacy.sphinx.packet import SphinxHeader, SphinxPacket
 from lib.privacy.common.constants import LOCALHOST_ADDRESS,\
-    DEFAULT_ADDRESS_LENGTH
+    DEFAULT_ADDRESS_LENGTH, GROUP_ELEM_LENGTH, MAC_SIZE
 import itertools
+from lib.privacy.sphinx.sphinx_crypto_util import stream_cipher_encrypt,\
+    verify_mac, stream_cipher_decrypt
+
+
+class _MacVerificationFailure(Exception):
+    """
+    Exception indicating the failed verification of a Message Authentication
+    Code (MAC).
+    """
+    pass
 
 
 class HornetSource(HornetNode):
@@ -142,7 +153,7 @@ class HornetSource(HornetNode):
                                                  dest_shared_key)
 
         # Construct new SessionRequestInfo object and store it
-        reply_id = final_dh_pubkey
+        reply_id = final_dh_pubkey.serialize()
         session_request_info = SessionRequestInfo(session_id, fwd_path_data,
                                                   bwd_path_data, reply_id,
                                                   valid_for_seconds)
@@ -161,6 +172,116 @@ class HornetSource(HornetNode):
                                    first_hop=fwd_path[0],
                                    max_hops=self._sphinx_end_host.max_hops)
         return (session_id, setup_packet)
+
+    @staticmethod
+    def _retrieve_fses_and_pubkeys(fs_payload, shared_sphinx_keys,
+                                   initial_fs_payload):
+        """
+        Retrieves all the forwarding segments and the temporary public keys of
+        the nodes in the fs_payload, using the keys and the initial forwarding
+        segment provided. This function checks also all the MACs added by the
+        nodes at each hop: if all check succeed, the list of retrieved
+        forwarding segment is returned, else raise an exception.
+        """
+        stream_keys = [derive_fs_payload_stream_key(shared_key)
+                       for shared_key in shared_sphinx_keys]
+        mac_keys = [derive_fs_payload_mac_key(shared_key)
+                       for shared_key in shared_sphinx_keys]
+        # Compute the list of dropped padding by simulating the processing of
+        # each node on the path
+        fake_fs_and_pubkey = b'\0' * (FS_LENGTH + GROUP_ELEM_LENGTH)
+        fake_mac = b'\0' * MAC_SIZE
+        dropped_length = FS_LENGTH + GROUP_ELEM_LENGTH + MAC_SIZE
+        tmp_payload = initial_fs_payload
+        dropped_paddings = []
+        for stream_key in stream_keys:
+            dropped_paddings.append(tmp_payload[-dropped_length:])
+            tmp_payload = fake_fs_and_pubkey + tmp_payload[:-dropped_length]
+            tmp_payload = fake_mac + stream_cipher_encrypt(stream_key,
+                                                          tmp_payload)
+        # Retrieve the FSes and the temporary public keys by reverting the
+        # steps done by each node (see
+        # :func:`hornet_node.add_fs_to_fs_payload`)
+        fs_list = []
+        pubkey_list = []
+        for stream_key, mac_key in zip(reversed(stream_keys),
+                                       reversed(mac_keys)):
+            mac = fs_payload[:MAC_SIZE]
+            tmp_payload = fs_payload[MAC_SIZE:]
+            if not verify_mac(mac_key, tmp_payload, mac):
+                raise _MacVerificationFailure()
+            tmp_payload = stream_cipher_decrypt(stream_key, tmp_payload)
+            fs_list.append(tmp_payload[:FS_LENGTH])
+            pubkey_list.append(tmp_payload[FS_LENGTH:
+                                           FS_LENGTH + GROUP_ELEM_LENGTH])
+            fs_payload = (tmp_payload[FS_LENGTH + GROUP_ELEM_LENGTH:] +
+                          dropped_paddings.pop())
+        assert fs_payload == initial_fs_payload
+        return (fs_list, pubkey_list)
+
+    def process_setup_packet(self, raw_packet):
+        """
+        Process an incoming Hornet setup packet
+        (:class:`hornet_packet.SetupPacket`), and return an instance of class
+        :class:`hornet_processing.HornetProcessingResult`.
+        """
+        try:
+            packet = SetupPacket.parse_bytes_to_packet(raw_packet)
+        except PacketParsingException:
+            return HornetProcessingResult(HornetProcessingResult.Type.INVALID)
+        if packet.get_type() != HornetPacketType.SETUP_BWD:
+            return HornetProcessingResult(HornetProcessingResult.Type.INVALID)
+
+        # Process the sphinx packet
+        sphinx_packet = packet.sphinx_packet
+        try:
+            sphinx_processing_result = \
+                self._sphinx_end_host.process_incoming_reply(sphinx_packet)
+        except:
+            return HornetProcessingResult(HornetProcessingResult.Type.INVALID)
+        if not sphinx_processing_result.is_at_destination():
+            return HornetProcessingResult(HornetProcessingResult.Type.INVALID)
+
+        # Retrieve the session request information
+        #FIXME:Daniele: Add protection against concurrent access
+        reply_id = sphinx_processing_result.reply_id
+        if reply_id not in self._session_requests_by_reply_id:
+            return HornetProcessingResult(HornetProcessingResult.Type.INVALID)
+        session_request_info = self._session_requests_by_reply_id[reply_id]
+        if (session_request_info.expiration_time < time.time() or
+                packet.expiration_time < time.time()):
+            return HornetProcessingResult(
+                        HornetProcessingResult.Type.SESSION_EXPIRED,
+                        session_id=session_request_info.session_id)
+
+        # Get the forwarding segments for the forward path
+        fwd_fs_payload = self._sphinx_node.get_message_from_payload(
+                                        sphinx_processing_result.result)
+        try:
+            fwd_fses, fwd_tmp_pubkeys = self._retrieve_fses_and_pubkeys(
+                fwd_fs_payload,
+                session_request_info.forward_path_data.shared_sphinx_keys,
+                session_request_info.forward_path_data.initial_fs_payload)
+        except _MacVerificationFailure:
+            return HornetProcessingResult(HornetProcessingResult.Type.INVALID)
+
+        # Get the forwarding segments for the backward path
+        bwd_fs_payload = packet.fs_payload
+        try:
+            # The last shared_sphinx_key is not passed, as it is the key that
+            # the source "shares with itself", but the source has not added
+            # any forwarding segment to the fs payload it just received.
+            bwd_fses, bwd_tmp_pubkeys = self._retrieve_fses_and_pubkeys(
+                bwd_fs_payload,
+                session_request_info.backward_path_data.shared_sphinx_keys[:
+                                                                           -1],
+                session_request_info.backward_path_data.initial_fs_payload)
+        except _MacVerificationFailure:
+            return HornetProcessingResult(HornetProcessingResult.Type.INVALID)
+
+        #FIXME:Daniele: Finish method (the return is incorrect)
+        return HornetProcessingResult(HornetProcessingResult.Type
+                                      .SESSION_ESTABLISHED)
 
 
 class HornetDestination(HornetNode):
@@ -340,6 +461,11 @@ def test():
     assert len(new_packet.fs_payload) == compute_fs_payload_size()
     assert new_packet.get_first_hop() == bwd_path[2]
     raw_packet = new_packet.pack()
+
+    # Source processing of the second setup packet
+    result = source.process_incoming_packet(raw_packet)
+    assert (result.result_type ==
+            HornetProcessingResult.Type.SESSION_ESTABLISHED)
 
 
 if __name__ == "__main__":
