@@ -33,7 +33,9 @@ import time
 from lib.privacy.hornet_processing import HornetProcessingResult
 from lib.privacy.common.exception import PacketParsingException
 from lib.privacy.sphinx.packet import SphinxHeader
-from lib.privacy.common.constants import LOCALHOST_ADDRESS
+from lib.privacy.common.constants import LOCALHOST_ADDRESS,\
+    DEFAULT_ADDRESS_LENGTH
+import itertools
 
 
 class HornetSource(HornetNode):
@@ -97,6 +99,9 @@ class HornetSource(HornetNode):
         """
         assert len(fwd_path) == len(fwd_pubkeys)
         assert len(bwd_path) == len(bwd_pubkeys)
+        for address in itertools.chain(fwd_path, bwd_path):
+            assert isinstance(address, bytes)
+            assert len(address) == DEFAULT_ADDRESS_LENGTH
         # pylint: disable=no-member
         session_id = uuid.uuid4().int
         # pylint: enable=no-member
@@ -145,7 +150,7 @@ class HornetSource(HornetNode):
 
         # Construct the first setup packet
         #FIXME:Daniele: add end-to-end MAC?
-        payload = bwd_header.pack()
+        payload = bwd_path[0] + bwd_header.pack()
         sphinx_packet = (self._sphinx_end_host.
                         construct_forward_packet(payload,
                                                  fwd_shared_sphinx_keys,
@@ -153,7 +158,8 @@ class HornetSource(HornetNode):
         setup_packet = SetupPacket(HornetPacketType.SETUP_FWD,
                                    session_expiration_time, sphinx_packet,
                                    fwd_initial_fs_payload,
-                                   self._sphinx_end_host.max_hops)
+                                   first_hop=fwd_path[0],
+                                   max_hops=self._sphinx_end_host.max_hops)
         return (session_id, setup_packet)
 
 
@@ -196,13 +202,17 @@ class HornetDestination(HornetNode):
         if not sphinx_processing_result.is_at_destination():
             return HornetProcessingResult(HornetProcessingResult.Type.INVALID)
         payload = sphinx_processing_result.result
-        bwd_sphinx_header = SphinxHeader.parse_bytes_to_header(payload)
+        first_hop = payload[:DEFAULT_ADDRESS_LENGTH]
+        raw_header = payload[DEFAULT_ADDRESS_LENGTH:]
+        bwd_sphinx_header = SphinxHeader.parse_bytes_to_header(raw_header)
         # Create new shared_key (forward secrecy) from a new Private
         tmp_private = Private()
         source_public = Public(sphinx_processing_result.source_pubkey)
         long_shared_key = tmp_private.get_shared_key(source_public)
         shared_key = long_shared_key[:SHARED_KEY_LENGTH]
         # Add a new FS to the FS payload
+        #TODO:Daniele: something more useful than the localhost address could
+        #   be stored in the FS of the destination
         new_fs = self.create_forwarding_segment(shared_key, LOCALHOST_ADDRESS,
                                                 packet.expiration_time)
         tmp_pubkey = tmp_private.get_public().serialize()
@@ -225,8 +235,8 @@ class HornetDestination(HornetNode):
                                     packet.expiration_time,
                                     sphinx_reply_packet,
                                     new_fs_payload,
-                                    packet.max_hops).pack()
-        #FIXME:Daniele: Add first hop address
+                                    first_hop=first_hop,
+                                    max_hops=packet.max_hops).pack()
         return HornetProcessingResult(HornetProcessingResult
                                       .Type.SESSION_REQUEST,
                                       packet_to_send=second_packet)

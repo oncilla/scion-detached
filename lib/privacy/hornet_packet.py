@@ -138,16 +138,20 @@ class SetupPacket(object):
     :vartype sphinx_packet: :class:`SphinxPacket`
     :ivar fs_payload: FS payload, containing all the FSes collected
     :vartype fs_payload: bytes
+    :ivar first_hop: Address (routing information) of the first hop to which
+        the packet should be sent to.
+    :ivar first_hop: bytes
     :ivar max_hops: Maximum number of hops on the path
     :vartype max_hops: int
     """
 
     def __init__(self, packet_type, expiration_time, sphinx_packet,
-                 fs_payload, max_hops=DEFAULT_MAX_HOPS):
+                 fs_payload, first_hop=None, max_hops=DEFAULT_MAX_HOPS):
         assert isinstance(packet_type, int)
         assert isinstance(expiration_time, int)
         assert isinstance(sphinx_packet, SphinxPacket)
         assert isinstance(fs_payload, bytes)
+        assert first_hop is None or isinstance(first_hop, bytes)
         assert isinstance(max_hops, int)
         if packet_type not in HornetPacketType.SETUP_TYPES:
             raise TypeError("expected setup type, one of " +
@@ -157,6 +161,7 @@ class SetupPacket(object):
         self.expiration_time = expiration_time
         self.sphinx_packet = sphinx_packet
         self.fs_payload = fs_payload
+        self.first_hop = first_hop
 
     @classmethod
     def parse_bytes_to_packet(cls, raw, **kwargs):
@@ -231,15 +236,19 @@ class AnonymousHeader(object):
     :ivar blinded_aheader: The blinded anonymous header (containing the FSes
         and MACs for the following hops).
     :vartype blinded_aheader: bytes
+    :ivar first_hop: Address (routing information) of the first hop to which
+        the packet should be sent to.
+    :ivar first_hop: bytes
     """
 
     def __init__(self, packet_type, nonce, current_fs, current_mac,
-                 blinded_aheader, max_hops=DEFAULT_MAX_HOPS):
+                 blinded_aheader, first_hop=None, max_hops=DEFAULT_MAX_HOPS):
         assert isinstance(packet_type, int)
         assert isinstance(nonce, bytes)
         assert isinstance(current_fs, bytes)
         assert isinstance(current_mac, bytes)
         assert isinstance(blinded_aheader, bytes)
+        assert first_hop is None or isinstance(first_hop, bytes)
         assert isinstance(max_hops, int)
         assert len(blinded_aheader) == compute_blinded_aheader_size(max_hops)
         if packet_type not in HornetPacketType.DATA_TYPES:
@@ -251,6 +260,7 @@ class AnonymousHeader(object):
         self.current_fs = current_fs
         self.current_mac = current_mac
         self.blinded_aheader = blinded_aheader
+        self.first_hop = first_hop
 
     @classmethod
     def parse_bytes_to_header(cls, raw):
@@ -274,7 +284,7 @@ class AnonymousHeader(object):
         current_mac = raw[current_mac_index:blinded_aheader_index]
         blinded_aheader = raw[blinded_aheader_index:]
         return AnonymousHeader(packet_type, nonce, current_fs, current_mac,
-                               blinded_aheader, max_hops)
+                               blinded_aheader, max_hops=max_hops)
 
     def pack(self):
         """
@@ -343,7 +353,7 @@ def test_setup(max_hops=DEFAULT_MAX_HOPS):
     expiration_time = 1426520000
     fs_payload = b'6'*compute_fs_payload_size(max_hops=max_hops)
     setup_packet = SetupPacket(packet_type, expiration_time, sphinx_packet,
-                               fs_payload, max_hops)
+                               fs_payload, max_hops=max_hops)
     raw_packet = setup_packet.pack()
 
     parsed_packet = SetupPacket.parse_bytes_to_packet(raw_packet)
@@ -360,7 +370,7 @@ def test_data_transmission(max_hops=DEFAULT_MAX_HOPS):
     current_mac = b'3'*MAC_SIZE
     blinded_aheader = b'4'*compute_blinded_aheader_size(max_hops)
     header = AnonymousHeader(packet_type, nonce, current_fs, current_mac,
-                             blinded_aheader, max_hops)
+                             blinded_aheader, max_hops=max_hops)
     payload = b'5'*DATA_PAYLOAD_LENGTH
     data_packet = DataPacket(header, payload)
     raw_packet = data_packet.pack()

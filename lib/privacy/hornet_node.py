@@ -199,7 +199,7 @@ class HornetNode(object):
                                        packet.expiration_time,
                                        processed_sphinx_packet,
                                        processed_fs_payload,
-                                       packet.max_hops).pack()
+                                       max_hops=packet.max_hops).pack()
         return HornetProcessingResult(HornetProcessingResult.Type.FORWARD,
                                       packet_to_send=processed_packet)
 
