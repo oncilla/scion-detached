@@ -23,14 +23,17 @@ from lib.privacy.hornet_node import HornetNode
 from lib.privacy.sphinx.sphinx_end_host import SphinxEndHost,\
     compute_shared_keys
 import uuid
-from curve25519.keys import Private
+from curve25519.keys import Private, Public
 from lib.privacy.session import SetupPathData, SessionRequestInfo
 from lib.privacy.hornet_packet import compute_fs_payload_size, SetupPacket,\
-    HornetPacketType
+    HornetPacketType, SHARED_KEY_LENGTH
 from lib.privacy.hornet_crypto_util import generate_initial_fs_payload
 import os
 import time
 from lib.privacy.hornet_processing import HornetProcessingResult
+from lib.privacy.common.exception import PacketParsingException
+from lib.privacy.sphinx.packet import SphinxHeader
+from lib.privacy.common.constants import LOCALHOST_ADDRESS
 
 
 class HornetSource(HornetNode):
@@ -98,7 +101,7 @@ class HornetSource(HornetNode):
         session_id = uuid.uuid4().int
         # pylint: enable=no-member
         fs_payload_length = compute_fs_payload_size(self._sphinx_end_host.
-                                                  max_hops)
+                                                    max_hops)
 
         #FIXME:Daniele: Add MAC extension for sphinx headers so that
         #   the per-hop MACs cover also Hornet's expiration time (EXP)
@@ -152,6 +155,81 @@ class HornetSource(HornetNode):
                                    fwd_initial_fs_payload,
                                    self._sphinx_end_host.max_hops)
         return (session_id, setup_packet)
+
+
+class HornetDestination(HornetNode):
+    """
+    A Hornet destination.
+
+    :ivar secret_key: secret key of the HornetNode (SV in the paper)
+    :vartype secret_key: bytes
+    :ivar private: private key of the HornetNode
+    :vartype private: bytes or :class:`curve25519.keys.Private`
+    :ivar public: public key of the HornetNode
+    :vartype public: bytes
+    """
+
+    def __init__(self, secret_key, private, public=None):
+        assert isinstance(secret_key, bytes)
+        super().__init__(secret_key, private=private)
+        self._open_sessions = dict()
+
+    def process_setup_packet(self, raw_packet):
+        """
+        Process an incoming Hornet setup packet
+        (:class:`hornet_packet.SetupPacket`), and return an instance of class
+        :class:`hornet_processing.HornetProcessingResult`.
+        """
+        try:
+            packet = SetupPacket.parse_bytes_to_packet(raw_packet)
+        except PacketParsingException:
+            return HornetProcessingResult(HornetProcessingResult.Type.INVALID)
+        if packet.expiration_time <= int(time.time()):
+            return HornetProcessingResult(HornetProcessingResult.Type.INVALID)
+        # Process the sphinx packet
+        sphinx_packet = packet.sphinx_packet
+        try:
+            sphinx_processing_result = \
+                self._sphinx_node.get_packet_processing_result(sphinx_packet)
+        except:
+            return HornetProcessingResult(HornetProcessingResult.Type.INVALID)
+        if not sphinx_processing_result.is_at_destination():
+            return HornetProcessingResult(HornetProcessingResult.Type.INVALID)
+        payload = sphinx_processing_result.result
+        bwd_sphinx_header = SphinxHeader.parse_bytes_to_header(payload)
+        # Create new shared_key (forward secrecy) from a new Private
+        tmp_private = Private()
+        source_public = Public(sphinx_processing_result.source_pubkey)
+        long_shared_key = tmp_private.get_shared_key(source_public)
+        shared_key = long_shared_key[:SHARED_KEY_LENGTH]
+        # Add a new FS to the FS payload
+        new_fs = self.create_forwarding_segment(shared_key, LOCALHOST_ADDRESS,
+                                                packet.expiration_time)
+        tmp_pubkey = tmp_private.get_public().serialize()
+        sphinx_shared_key = sphinx_processing_result.shared_key
+        processed_fs_payload = self.add_fs_to_fs_payload(sphinx_shared_key,
+                                                         new_fs,
+                                                         tmp_pubkey,
+                                                         packet.fs_payload)
+        # Generate the new FS payload
+        fs_payload_length = compute_fs_payload_size(self._sphinx_node.max_hops)
+        new_fs_payload = generate_initial_fs_payload(sphinx_shared_key,
+                                                     fs_payload_length)
+        # Generate the new Sphinx packet
+        sphinx_reply_packet = (self._sphinx_node.
+                               construct_reply_packet(processed_fs_payload,
+                                                      sphinx_shared_key,
+                                                      bwd_sphinx_header))
+        # Create the second setup packet to send back to the source
+        second_packet = SetupPacket(packet.packet_type,
+                                    packet.expiration_time,
+                                    sphinx_reply_packet,
+                                    new_fs_payload,
+                                    packet.max_hops).pack()
+        #FIXME:Daniele: Add first hop address
+        return HornetProcessingResult(HornetProcessingResult
+                                      .Type.SESSION_REQUEST,
+                                      packet_to_send=second_packet)
 
 
 def test():
