@@ -49,6 +49,16 @@ def derive_fs_payload_mac_key(sphinx_shared_key):
                   sphinx_shared_key).digest()
 
 
+def derive_aheader_stream_key(shared_key):
+    """
+    Derive the key for the stream cipher from the shared key (sphinx), which
+    will be used to process the FS payload.
+    """
+    assert isinstance(shared_key, bytes)
+    return sha256(b"hornet-keyderivation-aheader-stream:" +
+                  shared_key).digest()
+
+
 def generate_initial_fs_payload(shared_sphinx_key, fs_payload_length):
     """
     Works as PRG keyed with the input shared_sphinx_key, outputting a
