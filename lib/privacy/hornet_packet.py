@@ -140,6 +140,15 @@ class HornetPacket(object):
         """
         raise NotImplementedError
 
+    def get_first_hop(self):
+        """
+        Return the first hop to which the packet should be forwarded,
+        or None if it is not specified
+
+        :rtype: bytes or NoneType
+        """
+        raise NotImplementedError
+
 
 class SetupPacket(HornetPacket):
     """
@@ -246,6 +255,15 @@ class SetupPacket(HornetPacket):
         :rtype: :class:`HornetPacketType`
         """
         return self.packet_type
+
+    def get_first_hop(self):
+        """
+        Return the first hop to which the packet should be forwarded,
+        or None if it is not specified
+
+        :rtype: bytes or NoneType
+        """
+        return self.first_hop
 
 
 class AnonymousHeader(object):
@@ -376,6 +394,15 @@ class DataPacket(HornetPacket):
         :rtype: :class:`HornetPacketType`
         """
         return self.header.packet_type
+
+    def get_first_hop(self):
+        """
+        Return the first hop to which the packet should be forwarded,
+        or None if it is not specified
+
+        :rtype: bytes or NoneType
+        """
+        return self.header.first_hop
 
 
 def test_setup(max_hops=DEFAULT_MAX_HOPS):
