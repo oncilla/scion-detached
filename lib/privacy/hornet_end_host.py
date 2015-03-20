@@ -313,6 +313,33 @@ def test():
     assert isinstance(new_packet.sphinx_packet, SphinxPacket)
     assert len(new_packet.fs_payload) == compute_fs_payload_size()
     assert new_packet.get_first_hop() == bwd_path[0]
+    raw_packet = new_packet.pack()
+
+    # Node 2 setup packet processing
+    result = node_2.process_incoming_packet(raw_packet)
+    assert result.result_type == HornetProcessingResult.Type.FORWARD
+    new_packet = result.packet_to_send
+    assert new_packet is not None
+    assert new_packet.get_type() == HornetPacketType.SETUP_BWD
+    #assert new_packet.max_hops == max_hops
+    assert new_packet.expiration_time == session_expiration_time
+    assert isinstance(new_packet.sphinx_packet, SphinxPacket)
+    assert len(new_packet.fs_payload) == compute_fs_payload_size()
+    assert new_packet.get_first_hop() == bwd_path[1]
+    raw_packet = new_packet.pack()
+
+    # Node 1 setup packet processing
+    result = node_1.process_incoming_packet(raw_packet)
+    assert result.result_type == HornetProcessingResult.Type.FORWARD
+    new_packet = result.packet_to_send
+    assert new_packet is not None
+    assert new_packet.get_type() == HornetPacketType.SETUP_BWD
+    #assert new_packet.max_hops == max_hops
+    assert new_packet.expiration_time == session_expiration_time
+    assert isinstance(new_packet.sphinx_packet, SphinxPacket)
+    assert len(new_packet.fs_payload) == compute_fs_payload_size()
+    assert new_packet.get_first_hop() == bwd_path[2]
+    raw_packet = new_packet.pack()
 
 
 if __name__ == "__main__":
