@@ -26,9 +26,10 @@ import uuid
 from curve25519.keys import Private, Public
 from lib.privacy.session import SetupPathData, SessionRequestInfo
 from lib.privacy.hornet_packet import compute_fs_payload_size, SetupPacket,\
-    HornetPacketType, SHARED_KEY_LENGTH, FS_LENGTH
+    HornetPacketType, SHARED_KEY_LENGTH, FS_LENGTH, compute_blinded_aheader_size
 from lib.privacy.hornet_crypto_util import generate_initial_fs_payload,\
-    derive_fs_payload_stream_key, derive_fs_payload_mac_key
+    derive_fs_payload_stream_key, derive_fs_payload_mac_key,\
+    derive_aheader_stream_key
 import os
 import time
 from lib.privacy.hornet_processing import HornetProcessingResult
@@ -174,6 +175,27 @@ class HornetSource(HornetNode):
         return (session_id, setup_packet)
 
     @staticmethod
+    def construct_anonymous_header(shared_keys):
+        """
+        Construct an anonymous header (:class:`hornet_packet.AnonymousHeader`).
+        """
+        pad_size = FS_LENGTH + MAC_SIZE
+        blinded_header_size = compute_blinded_aheader_size()
+        aheader_size = pad_size + blinded_header_size
+        number_of_hops = len(shared_keys)
+        stream_keys = [derive_aheader_stream_key(shared_key)
+                       for shared_key in shared_keys]
+
+        # Create filler string
+        long_filler = b'\0' * aheader_size
+        for stream_key in stream_keys[:-1]:
+            long_filler = long_filler[pad_size:] + b'\0'*pad_size
+            long_filler = stream_cipher_decrypt(stream_key, long_filler)
+        filler_length = pad_size * number_of_hops
+        filler = long_filler[-filler_length:]
+        #FIXME:Daniele: Finish this method (change filler_length?)
+
+    @staticmethod
     def _retrieve_fses_and_pubkeys(fs_payload, shared_sphinx_keys,
                                    initial_fs_payload):
         """
@@ -278,6 +300,7 @@ class HornetSource(HornetNode):
                 session_request_info.backward_path_data.initial_fs_payload)
         except _MacVerificationFailure:
             return HornetProcessingResult(HornetProcessingResult.Type.INVALID)
+        
 
         #FIXME:Daniele: Finish method (the return is incorrect)
         return HornetProcessingResult(HornetProcessingResult.Type
