@@ -236,7 +236,7 @@ class HornetDestination(HornetNode):
                                     sphinx_reply_packet,
                                     new_fs_payload,
                                     first_hop=first_hop,
-                                    max_hops=packet.max_hops).pack()
+                                    max_hops=packet.max_hops)
         return HornetProcessingResult(HornetProcessingResult
                                       .Type.SESSION_REQUEST,
                                       packet_to_send=second_packet)

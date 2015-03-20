@@ -20,6 +20,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
+from lib.privacy.hornet_packet import HornetPacket
 
 
 class HornetProcessingResult(object):
@@ -66,7 +67,8 @@ class HornetProcessingResult(object):
         assert result_type in HornetProcessingResult.Type.ALL_TYPES
         assert session_id is None or isinstance(session_id, int)
         assert received_data is None or isinstance(received_data, bytes)
-        assert packet_to_send is None or isinstance(packet_to_send, bytes)
+        assert (packet_to_send is None or isinstance(packet_to_send, bytes) or
+                isinstance(packet_to_send, HornetPacket))
         self.result_type = result_type
         self.session_id = session_id
         self.received_data = received_data

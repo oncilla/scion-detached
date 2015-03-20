@@ -118,7 +118,30 @@ def get_packet_type(raw_packet_or_header):
     return HornetPacketType.from_bytes(raw_packet_or_header[:length])
 
 
-class SetupPacket(object):
+class HornetPacket(object):
+    """
+    Abstact base class for all Hornet packets.
+    """
+
+    def pack(self):
+        """
+        Return the packet as a byte sequence
+
+        :returns: raw packet (byte sequence)
+        :rtype: bytes
+        """
+        raise NotImplementedError
+
+    def get_type(self):
+        """
+        Return the type of the packet
+
+        :rtype: :class:`HornetPacketType`
+        """
+        raise NotImplementedError
+
+
+class SetupPacket(HornetPacket):
     """
     Packet of the setup phase.
 
@@ -166,7 +189,7 @@ class SetupPacket(object):
     @classmethod
     def parse_bytes_to_packet(cls, raw, **kwargs):
         """
-        Parses the raw data and creates a HornetPacket.
+        Parses the raw data and creates a SetupPacket.
 
         :param raw: raw packet (in byte sequence)
         :type raw: bytes
@@ -179,8 +202,8 @@ class SetupPacket(object):
         :type group_elem_length: int
         :param payload_length: length of the payload
         :type payload_length: int
-        :returns: the newly-created :class:`HornetPacket     instance
-        :rtype: :class:`HornetPacket`
+        :returns: the newly-created :class:`SetupPacket     instance
+        :rtype: :class:`SetupPacket`
         """
         assert isinstance(raw, bytes)
         max_hops_index = HornetPacketType.length()
@@ -215,6 +238,14 @@ class SetupPacket(object):
                 self.max_hops.to_bytes(MAX_HOPS_LENGTH, "big") +
                 self.expiration_time.to_bytes(TIMESTAMP_LENGTH, "big") +
                 self.sphinx_packet.pack() + self.fs_payload)
+
+    def get_type(self):
+        """
+        Return the type of the packet
+
+        :rtype: :class:`HornetPacketType`
+        """
+        return self.packet_type
 
 
 class AnonymousHeader(object):
@@ -299,7 +330,7 @@ class AnonymousHeader(object):
                 self.blinded_aheader)
 
 
-class DataPacket(object):
+class DataPacket(HornetPacket):
     """
     Hornet data packet, composed of an AnonymousHeader and a payload.
 
@@ -337,6 +368,14 @@ class DataPacket(object):
         :rtype: bytes
         """
         return self.header.pack() + self.payload
+
+    def get_type(self):
+        """
+        Return the type of the packet
+
+        :rtype: :class:`HornetPacketType`
+        """
+        return self.header.packet_type
 
 
 def test_setup(max_hops=DEFAULT_MAX_HOPS):
