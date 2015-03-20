@@ -28,7 +28,8 @@ from lib.privacy.common.exception import PacketParsingException
 from curve25519.keys import Private, Public
 from lib.privacy.sphinx.sphinx_crypto_util import verify_mac, derive_mac_key,\
     derive_stream_key, stream_cipher_decrypt, derive_prp_key,\
-    compute_blinding_private, BLOCK_SIZE, pad_to_block_multiple, pad_to_length
+    compute_blinding_private, BLOCK_SIZE, pad_to_block_multiple, pad_to_length,\
+    remove_length_pad, remove_block_pad
 from lib.crypto.prp import prp_decrypt, prp_encrypt
 
 
@@ -244,6 +245,14 @@ class SphinxNode(object):
         prp_key = derive_prp_key(shared_key)
         payload = prp_encrypt(prp_key, payload)
         return SphinxPacket(header, payload)
+
+    @staticmethod
+    def get_message_from_payload(payload):
+        """
+        Obtain original message from payload (remove padding).
+        """
+        assert isinstance(payload, bytes)
+        return remove_length_pad(remove_block_pad(payload))
 
 
 def test():

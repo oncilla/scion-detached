@@ -26,12 +26,10 @@ from lib.privacy.sphinx.packet import compute_blinded_header_size,\
 from lib.privacy.sphinx.sphinx_crypto_util import stream_cipher_decrypt,\
     derive_stream_key, derive_mac_key, stream_cipher_encrypt, compute_mac,\
     derive_prp_key, pad_to_length, pad_to_block_multiple,\
-    compute_blinding_private, remove_block_pad,\
-    remove_length_pad, verify_mac
+    compute_blinding_private, verify_mac
 import os
 from lib.crypto.prp import prp_encrypt, BLOCK_SIZE, prp_decrypt
 from curve25519.keys import Private, Public
-import curve25519.keys
 from lib.privacy.common.exception import PacketParsingException
 
 
@@ -285,14 +283,6 @@ class SphinxEndHost(SphinxNode):
         return ProcessingResult(ProcessingResult.Type.AT_DESTINATION,
                                 result=payload, reply_id=header.dh_pubkey_0)
 
-    @staticmethod
-    def get_message_from_payload(payload):
-        """
-        Obtain original message from payload (remove padding.
-        """
-        assert isinstance(payload, bytes)
-        return remove_length_pad(remove_block_pad(payload))
-
 
 def test():
     private = Private()
@@ -319,7 +309,7 @@ def test_routing():
     source_pubkey = source.public
     node_1 = SphinxNode(node_1_private)
     node_2 = SphinxNode(node_2_private)
-    node_3 = SphinxEndHost(node_3_private) # Destination
+    node_3 = SphinxNode(node_3_private) # Destination
 
     ## Forward packet ##
     nodes_privates = [node_1_private, node_2_private, node_3_private]
