@@ -24,7 +24,7 @@ from lib.privacy.common.constants import DEFAULT_ADDRESS_LENGTH, MAC_SIZE,\
     DEFAULT_MAX_HOPS, GROUP_ELEM_LENGTH
 from curve25519.keys import Public
 
-DEFAULT_PAYLOAD_LENGTH = 512 # Default size of the payload in bytes
+DEFAULT_PAYLOAD_LENGTH = 768 # Default size of the payload in bytes
 
 
 def compute_pernode_size(address_length=DEFAULT_ADDRESS_LENGTH):

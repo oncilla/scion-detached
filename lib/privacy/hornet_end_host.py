@@ -201,7 +201,8 @@ class HornetDestination(HornetNode):
             return HornetProcessingResult(HornetProcessingResult.Type.INVALID)
         if not sphinx_processing_result.is_at_destination():
             return HornetProcessingResult(HornetProcessingResult.Type.INVALID)
-        payload = sphinx_processing_result.result
+        payload = self._sphinx_node.get_message_from_payload(
+                                        sphinx_processing_result.result)
         first_hop = payload[:DEFAULT_ADDRESS_LENGTH]
         raw_header = payload[DEFAULT_ADDRESS_LENGTH:]
         bwd_sphinx_header = SphinxHeader.parse_bytes_to_header(raw_header)
@@ -231,7 +232,7 @@ class HornetDestination(HornetNode):
                                                       sphinx_shared_key,
                                                       bwd_sphinx_header))
         # Create the second setup packet to send back to the source
-        second_packet = SetupPacket(packet.packet_type,
+        second_packet = SetupPacket(HornetPacketType.SETUP_BWD,
                                     packet.expiration_time,
                                     sphinx_reply_packet,
                                     new_fs_payload,
@@ -259,7 +260,7 @@ def test():
     # Destination
     dest_private = Private()
     dest_secret_key = b'd'*32
-    destination = HornetSource(dest_secret_key, dest_private)
+    destination = HornetDestination(dest_secret_key, dest_private)
 
     # Source session request
     fwd_path = [b'1'*16, b'2'*16, b'dest_address0000']
@@ -299,6 +300,19 @@ def test():
     assert isinstance(new_packet.sphinx_packet, SphinxPacket)
     assert len(new_packet.fs_payload) == compute_fs_payload_size()
     assert new_packet.get_first_hop() == fwd_path[2]
+    raw_packet = new_packet.pack()
+
+    # Destination setup packet processing
+    result = destination.process_incoming_packet(raw_packet)
+    assert result.result_type == HornetProcessingResult.Type.SESSION_REQUEST
+    new_packet = result.packet_to_send
+    assert new_packet is not None
+    assert new_packet.get_type() == HornetPacketType.SETUP_BWD
+    #assert new_packet.max_hops == max_hops
+    assert new_packet.expiration_time == session_expiration_time
+    assert isinstance(new_packet.sphinx_packet, SphinxPacket)
+    assert len(new_packet.fs_payload) == compute_fs_payload_size()
+    assert new_packet.get_first_hop() == bwd_path[0]
 
 
 if __name__ == "__main__":
