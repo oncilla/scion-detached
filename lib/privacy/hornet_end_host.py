@@ -32,7 +32,7 @@ import os
 import time
 from lib.privacy.hornet_processing import HornetProcessingResult
 from lib.privacy.common.exception import PacketParsingException
-from lib.privacy.sphinx.packet import SphinxHeader
+from lib.privacy.sphinx.packet import SphinxHeader, SphinxPacket
 from lib.privacy.common.constants import LOCALHOST_ADDRESS,\
     DEFAULT_ADDRESS_LENGTH
 import itertools
@@ -243,29 +243,62 @@ class HornetDestination(HornetNode):
 
 
 def test():
-    private = Private()
-    secret_key = b'1'*32
-    source = HornetSource(secret_key, private)
+    # Source
+    source_private = Private()
+    source_secret_key = b's'*32
+    source = HornetSource(source_secret_key, source_private)
 
-    fwd_path = [b'1'*16, b'2'*16, b'3'*16]
-    bwd_path = [b'2'*16, b'1'*16, b'source_address00']
+    # Nodes
     node_1_private = Private()
     node_2_private = Private()
-    node_3_private = Private()
-    fwd_privates = [node_1_private, node_2_private, node_3_private]
-    fwd_pubkeys = [p.get_public() for p in fwd_privates]
-    bwd_pubkeys = fwd_pubkeys[-2::-1]
-    bwd_pubkeys.append(source.public)
+    node_1_secret_key = b'1'*32
+    node_2_secret_key = b'2'*32
+    node_1 = HornetNode(node_1_secret_key, node_1_private)
+    node_2 = HornetNode(node_2_secret_key, node_2_private)
+
+    # Destination
+    dest_private = Private()
+    dest_secret_key = b'd'*32
+    destination = HornetSource(dest_secret_key, dest_private)
+
+    # Source session request
+    fwd_path = [b'1'*16, b'2'*16, b'dest_address0000']
+    bwd_path = [b'2'*16, b'1'*16, b'source_address00']
+    fwd_pubkeys = [node_1_private.get_public(), node_2_private.get_public(),
+                    destination.public]
+    bwd_pubkeys = [fwd_pubkeys[1], fwd_pubkeys[0], source.public]
     session_expiration_time = int(time.time()) + 60
     sid, packet = source.create_new_session_request(fwd_path, fwd_pubkeys,
                                                     bwd_path, bwd_pubkeys,
                                                     session_expiration_time)
+    assert isinstance(sid, int)
+    assert packet.get_first_hop() == fwd_path[0]
     raw_packet = packet.pack()
 
-    secret_key = b'2'*32
-    node_1 = HornetNode(secret_key, node_1_private)
+    # Node 1 setup packet processing
     result = node_1.process_incoming_packet(raw_packet)
     assert result.result_type == HornetProcessingResult.Type.FORWARD
+    new_packet = result.packet_to_send
+    assert new_packet is not None
+    assert new_packet.get_type() == HornetPacketType.SETUP_FWD
+    #assert new_packet.max_hops == max_hops
+    assert new_packet.expiration_time == session_expiration_time
+    assert isinstance(new_packet.sphinx_packet, SphinxPacket)
+    assert len(new_packet.fs_payload) == compute_fs_payload_size()
+    assert new_packet.get_first_hop() == fwd_path[1]
+    raw_packet = new_packet.pack()
+
+    # Node 2 setup packet processing
+    result = node_2.process_incoming_packet(raw_packet)
+    assert result.result_type == HornetProcessingResult.Type.FORWARD
+    new_packet = result.packet_to_send
+    assert new_packet is not None
+    assert new_packet.get_type() == HornetPacketType.SETUP_FWD
+    #assert new_packet.max_hops == max_hops
+    assert new_packet.expiration_time == session_expiration_time
+    assert isinstance(new_packet.sphinx_packet, SphinxPacket)
+    assert len(new_packet.fs_payload) == compute_fs_payload_size()
+    assert new_packet.get_first_hop() == fwd_path[2]
 
 
 if __name__ == "__main__":
