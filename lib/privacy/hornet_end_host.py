@@ -71,7 +71,8 @@ class HornetSource(HornetNode):
         super().__init__(secret_key, sphinx_node=self._sphinx_end_host)
         self._session_requests_by_reply_id = dict()
         self._session_requests_by_session_id = dict()
-        self._open_sessions = dict()
+        self._open_sessions_by_source_fs = dict()
+        self._open_sessions_by_session_id = dict()
 
     def add_session_request_info(self, session_request_info):
         """
@@ -86,8 +87,9 @@ class HornetSource(HornetNode):
 
     def remove_session_request_info(self, session_id=None, reply_id=None):
         """
-        Store a :class:`session.SessionRequestInfo` instance for a new session
-        request.
+        Remove a :class:`session.SessionRequestInfo` instance identified
+        through its session id or reply id. This method does nothing if the
+        given id is not associated to any existing session request.
         """
         assert [session_id, reply_id].count(None) == 1
         if session_id in self._session_requests_by_session_id:
@@ -100,6 +102,34 @@ class HornetSource(HornetNode):
             return # session_id already deleted
         del self._session_requests_by_session_id[session_id]
         del self._session_requests_by_reply_id[reply_id]
+
+    def add_session_info(self, session_info):
+        """
+        Store a :class:`session.SessionInfo` instance for a new session.
+        """
+        assert isinstance(session_info, SessionInfo)
+        self._open_sessions_by_session_id[session_info.session_id] = \
+            session_info
+        self._open_sessions_by_source_fs[session_info.source_fs] = \
+            session_info
+
+    def remove_session_info(self, session_id=None, source_fs=None):
+        """
+        Remove a :class:`session.SessionInfo` instance identified
+        through its session id or source fs. This method does nothing if the
+        given id is not associated to any existing session.
+        """
+        assert [session_id, source_fs].count(None) == 1
+        if session_id in self._open_sessions_by_session_id:
+            source_fs = (self._open_sessions_by_session_id[session_id]
+                         .source_fs)
+        elif source_fs in self._open_sessions_by_source_fs:
+            session_id = (self._open_sessions_by_source_fs[source_fs]
+                          .session_id)
+        else:
+            return # session_id already deleted
+        del self._open_sessions_by_session_id[session_id]
+        del self._open_sessions_by_source_fs[source_fs]
 
     def create_new_session_request(self, fwd_path, fwd_pubkeys, bwd_path,
                                    bwd_pubkeys, session_expiration_time,
@@ -390,7 +420,7 @@ class HornetSource(HornetNode):
         session_info = SessionInfo(session_request_info.session_id,
                                    fwd_path_data, bwd_path_data,
                                    source_dummy_fs)
-        self._open_sessions[session_request_info.session_id] = session_info
+        self.add_session_info(session_info)
         self.remove_session_request_info(session_id=
                                          session_request_info.session_id)
 
