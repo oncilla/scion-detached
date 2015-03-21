@@ -28,10 +28,11 @@ from lib.privacy.session import SetupPathData, SessionRequestInfo,\
     TransmissionPathData, SessionInfo
 from lib.privacy.hornet_packet import compute_fs_payload_size, SetupPacket,\
     HornetPacketType, SHARED_KEY_LENGTH, FS_LENGTH, compute_blinded_aheader_size,\
-    AnonymousHeader
+    AnonymousHeader, NONCE_LENGTH, DATA_PAYLOAD_LENGTH, DataPacket
 from lib.privacy.hornet_crypto_util import generate_initial_fs_payload,\
     derive_fs_payload_stream_key, derive_fs_payload_mac_key,\
-    derive_aheader_stream_key, derive_aheader_mac_key
+    derive_aheader_stream_key, derive_aheader_mac_key, derive_new_nonce,\
+    derive_data_payload_stream_key
 import os
 import time
 from lib.privacy.hornet_processing import HornetProcessingResult
@@ -41,13 +42,22 @@ from lib.privacy.common.constants import LOCALHOST_ADDRESS,\
     DEFAULT_ADDRESS_LENGTH, GROUP_ELEM_LENGTH, MAC_SIZE
 import itertools
 from lib.privacy.sphinx.sphinx_crypto_util import stream_cipher_encrypt,\
-    verify_mac, stream_cipher_decrypt, compute_mac
+    verify_mac, stream_cipher_decrypt, compute_mac, pad_to_length
+import copy
 
 
 class _MacVerificationFailure(Exception):
     """
     Exception indicating the failed verification of a Message Authentication
     Code (MAC).
+    """
+    pass
+
+
+class InvalidSession(Exception):
+    """
+    Exception raised when an attempt is made to access a session which does
+    not exist
     """
     pass
 
@@ -205,6 +215,43 @@ class HornetSource(HornetNode):
                                    first_hop=fwd_path[0],
                                    max_hops=self._sphinx_end_host.max_hops)
         return (session_id, setup_packet)
+
+    def construct_data_packet(self, session_id, packet_type, data):
+        """
+        Construct a :class:`hornet_packet.DataPacket` to be sent belonging
+        to the specified session.
+        """
+        assert isinstance(session_id, int)
+        assert isinstance(packet_type, int)
+        assert packet_type in HornetPacketType.DATA_TYPES
+        assert isinstance(data, bytes)
+        if session_id not in self._open_sessions_by_session_id:
+            raise InvalidSession("session id " + str(session_id) +
+                                 " does not correspond to any open session")
+        session_info = self._open_sessions_by_session_id[session_id]
+        # Set values for new header (deep copy is mainly to avoid issued with
+        # concurrent execution of this method, changing these values
+        # in the stored AnonymousHeader would not be a problem otherwise
+        header = copy.deepcopy(session_info.forward_path_data.anonymous_header)
+        header.packet_type = packet_type
+        new_nonce = os.urandom(NONCE_LENGTH)
+        header.nonce = new_nonce
+
+        # Construct the onion-encrypted payload
+        shared_keys = session_info.forward_path_data.shared_keys
+        received_nonce = new_nonce
+        nonces = [] # New nonces as derived at every hop by the nodes and dest
+        for shared_key in shared_keys:
+            received_nonce = derive_new_nonce(shared_key, received_nonce)
+            nonces.append(received_nonce)
+        stream_keys = [derive_data_payload_stream_key(shared_key)
+                       for shared_key in shared_keys]
+        payload = pad_to_length(data, DATA_PAYLOAD_LENGTH)
+        for stream_key, nonce in zip(reversed(stream_keys), reversed(nonces)):
+            payload = stream_cipher_encrypt(stream_key, payload, nonce)
+
+        # Return the new data packet
+        return DataPacket(header, payload)
 
     @staticmethod
     def _compute_session_shared_keys(source_tmp_private, blinding_factors,
@@ -424,9 +471,17 @@ class HornetSource(HornetNode):
         self.remove_session_request_info(session_id=
                                          session_request_info.session_id)
 
-        #FIXME:Daniele: Finish method (the return is incorrect)
+        # Create data packet to deliver the backward header to the destination
+        data_for_destination = bwd_path[0] + bwd_anonymous_header.pack()
+        next_packet = \
+            self.construct_data_packet(session_request_info.session_id,
+                                       HornetPacketType.DATA_FWD_SESSION,
+                                       data_for_destination)
+
         return HornetProcessingResult(HornetProcessingResult.Type
-                                      .SESSION_ESTABLISHED)
+                                      .SESSION_ESTABLISHED,
+                                      session_request_info.session_id,
+                                      packet_to_send=next_packet)
 
 
 class HornetDestination(HornetNode):
@@ -611,6 +666,16 @@ def test():
     result = source.process_incoming_packet(raw_packet)
     assert (result.result_type ==
             HornetProcessingResult.Type.SESSION_ESTABLISHED)
+    new_packet = result.packet_to_send
+    assert new_packet is not None
+    assert new_packet.get_type() == HornetPacketType.DATA_FWD_SESSION
+    assert len(new_packet.header.nonce) == NONCE_LENGTH
+    assert new_packet.header.nonce != b'\0'*16
+    assert len(new_packet.header.current_fs) == FS_LENGTH
+    assert len(new_packet.header.current_mac) == MAC_SIZE
+    assert (len(new_packet.header.blinded_aheader) ==
+            compute_blinded_aheader_size())
+    assert new_packet.get_first_hop() == fwd_path[0]
 
 
 if __name__ == "__main__":
