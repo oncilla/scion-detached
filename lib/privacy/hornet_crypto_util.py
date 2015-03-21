@@ -23,7 +23,7 @@ limitations under the License.
 from Crypto.Cipher import AES
 from Crypto.Util import Counter
 from hashlib import sha256
-from lib.privacy.hornet_packet import SHARED_KEY_LENGTH
+from lib.privacy.hornet_packet import SHARED_KEY_LENGTH, NONCE_LENGTH
 
 
 ZEROED_IV = b'\0'*AES.block_size
@@ -68,6 +68,26 @@ def derive_aheader_mac_key(shared_key):
     return sha256(b"hornet-keyderivation-aheader-mac:" + shared_key).digest()
 
 
+def derive_data_payload_stream_key(shared_key):
+    """
+    Derive the key for the stream cipher from the shared key, which
+    will be used to onion-encrypt/decrypt the data payload.
+    """
+    assert isinstance(shared_key, bytes)
+    return sha256(b"hornet-keyderivation-data-payload-stream:" +
+                  shared_key).digest()
+
+
+def derive_new_nonce(shared_key, received_nonce):
+    """
+    Derive the new nonce to use for the data payload onion-encryption/
+    decryption from the nonce received in the packet header.
+    """
+    hash_object = sha256(b"hornet-noncederivation-new-nonce:" + shared_key +
+                         received_nonce)
+    return hash_object.digest()[:NONCE_LENGTH]
+
+
 def generate_initial_fs_payload(shared_sphinx_key, fs_payload_length):
     """
     Works as PRG keyed with the input shared_sphinx_key, outputting a
@@ -89,7 +109,7 @@ def generate_fs_encdec_iv(shared_key):
     data in a forwarding segment.
     """
     hash_object = sha256(b"hornet-ivderivation-fs-encdec-iv:"+shared_key)
-    return hash_object.digest()[0:16]
+    return hash_object.digest()[:16]
 
 
 def fs_shared_key_encrypt(node_secret_key, fs_shared_key):
