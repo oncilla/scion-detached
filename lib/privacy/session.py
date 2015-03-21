@@ -21,7 +21,7 @@ limitations under the License.
 """
 from curve25519.keys import Private
 import time
-from lib.privacy.hornet_packet import AnonymousHeader
+from lib.privacy.hornet_packet import AnonymousHeader, FS_LENGTH
 
 
 # Min, max and default lifetime of a session request in seconds
@@ -152,6 +152,9 @@ class SessionInfo(object):
     :vartype forward_path_data: :class:`TransmissionPathData`
     :ivar backward_path_data: Data about the backward path
     :vartype backward_path_data: :class:`TransmissionPathData`
+    :ivar source_fs: dummy forwarding segment of the source, part of the
+        backward :class:`hornet_packet.AnonymousHeader` that allows the source
+        to match an incoming data packet to an open session.
     :ivar time_created: timestamp indicating the time when the session was
         established
     :vartype time_created: int
@@ -161,10 +164,12 @@ class SessionInfo(object):
     """
 
     def __init__(self, session_id, forward_path_data, backward_path_data,
-                 valid_for_seconds=None):
+                 source_fs, valid_for_seconds=None):
         assert isinstance(session_id, int)
         assert isinstance(forward_path_data, TransmissionPathData)
         assert isinstance(backward_path_data, TransmissionPathData)
+        assert isinstance(source_fs, bytes)
+        assert len(source_fs) == FS_LENGTH
         if valid_for_seconds is not None:
             assert isinstance(valid_for_seconds, int)
             if valid_for_seconds < 0:
@@ -174,6 +179,7 @@ class SessionInfo(object):
         self.session_id = session_id
         self.forward_path_data = forward_path_data
         self.backward_path_data = backward_path_data
+        self.source_fs = source_fs
         self.time_created = int(time.time())
         self.expiration_time = self.time_created + valid_for_seconds
 

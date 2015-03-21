@@ -24,12 +24,14 @@ from lib.privacy.sphinx.sphinx_end_host import SphinxEndHost,\
     compute_shared_keys
 import uuid
 from curve25519.keys import Private, Public
-from lib.privacy.session import SetupPathData, SessionRequestInfo
+from lib.privacy.session import SetupPathData, SessionRequestInfo,\
+    TransmissionPathData, SessionInfo
 from lib.privacy.hornet_packet import compute_fs_payload_size, SetupPacket,\
-    HornetPacketType, SHARED_KEY_LENGTH, FS_LENGTH, compute_blinded_aheader_size
+    HornetPacketType, SHARED_KEY_LENGTH, FS_LENGTH, compute_blinded_aheader_size,\
+    AnonymousHeader
 from lib.privacy.hornet_crypto_util import generate_initial_fs_payload,\
     derive_fs_payload_stream_key, derive_fs_payload_mac_key,\
-    derive_aheader_stream_key
+    derive_aheader_stream_key, derive_aheader_mac_key
 import os
 import time
 from lib.privacy.hornet_processing import HornetProcessingResult
@@ -39,7 +41,7 @@ from lib.privacy.common.constants import LOCALHOST_ADDRESS,\
     DEFAULT_ADDRESS_LENGTH, GROUP_ELEM_LENGTH, MAC_SIZE
 import itertools
 from lib.privacy.sphinx.sphinx_crypto_util import stream_cipher_encrypt,\
-    verify_mac, stream_cipher_decrypt
+    verify_mac, stream_cipher_decrypt, compute_mac
 
 
 class _MacVerificationFailure(Exception):
@@ -175,25 +177,68 @@ class HornetSource(HornetNode):
         return (session_id, setup_packet)
 
     @staticmethod
-    def construct_anonymous_header(shared_keys):
+    def _compute_session_shared_keys(source_tmp_private, blinding_factors,
+                                     nodes_tmp_pubkeys):
         """
-        Construct an anonymous header (:class:`hornet_packet.AnonymousHeader`).
+        Compute the shared keys between the source and the nodes on a path
+        given the initial temporary private key used by the source, the
+        blinding factors, and the temporary public keys sent by the nodes
+        in the FS payload.
         """
+        assert isinstance(source_tmp_private, Private)
+        shared_keys = []
+
+        for i, node_pubkey in enumerate(nodes_tmp_pubkeys):
+            if not isinstance(node_pubkey, Public):
+                node_pubkey = Public(node_pubkey)
+            tmp_pubkey = node_pubkey
+            for blinding_factor in blinding_factors[:i]:
+                tmp_pubkey = blinding_factor.get_shared_public(tmp_pubkey)
+            shared_keys.append(source_tmp_private.get_shared_key(tmp_pubkey))
+        return shared_keys
+
+    @staticmethod
+    def _construct_basic_anonymous_header(shared_keys, forwarding_segments):
+        """
+        Construct the fundamental part of an anonymous header
+        (:class:`hornet_packet.AnonymousHeader`), which consists in the
+        following triple: (first_fs, first_mac, blinded_aheader).
+        """
+        assert len(shared_keys) == len(forwarding_segments)
         pad_size = FS_LENGTH + MAC_SIZE
-        blinded_header_size = compute_blinded_aheader_size()
-        aheader_size = pad_size + blinded_header_size
+        blinded_aheader_size = compute_blinded_aheader_size()
+        aheader_size = pad_size + blinded_aheader_size
         number_of_hops = len(shared_keys)
         stream_keys = [derive_aheader_stream_key(shared_key)
                        for shared_key in shared_keys]
+        mac_keys = [derive_aheader_mac_key(shared_key)
+                    for shared_key in shared_keys]
 
         # Create filler string
         long_filler = b'\0' * aheader_size
         for stream_key in stream_keys[:-1]:
             long_filler = long_filler[pad_size:] + b'\0'*pad_size
             long_filler = stream_cipher_decrypt(stream_key, long_filler)
-        filler_length = pad_size * number_of_hops
+        filler_length = pad_size * (number_of_hops - 1)
         filler = long_filler[-filler_length:]
-        #FIXME:Daniele: Finish this method (change filler_length?)
+
+        # Compute the anonymous header at each hop, starting by the last,
+        # performing the reverse process of the anonymous header decryption
+        # that will be done by the nodes
+        blinded_aheader = (os.urandom(blinded_aheader_size - filler_length) +
+                          filler)
+        fs = forwarding_segments[-1]
+        mac = compute_mac(mac_keys[-1], fs + blinded_aheader)
+        for fs, stream_key, mac_key in zip(reversed(forwarding_segments[:-1]),
+                                           reversed(stream_keys[:-1]),
+                                           reversed(mac_keys[:-1])):
+            a_header = fs + mac + blinded_aheader
+            padded_blinded_aheader = stream_cipher_encrypt(stream_key,
+                                                           a_header)
+            blinded_aheader = padded_blinded_aheader[:-pad_size]
+            assert padded_blinded_aheader[-pad_size:] == b'\0'*pad_size
+            mac = compute_mac(mac_key, fs + blinded_aheader)
+        return (fs, mac, blinded_aheader)
 
     @staticmethod
     def _retrieve_fses_and_pubkeys(fs_payload, shared_sphinx_keys,
@@ -286,7 +331,6 @@ class HornetSource(HornetNode):
                 session_request_info.forward_path_data.initial_fs_payload)
         except _MacVerificationFailure:
             return HornetProcessingResult(HornetProcessingResult.Type.INVALID)
-
         # Get the forwarding segments for the backward path
         bwd_fs_payload = packet.fs_payload
         try:
@@ -300,7 +344,55 @@ class HornetSource(HornetNode):
                 session_request_info.backward_path_data.initial_fs_payload)
         except _MacVerificationFailure:
             return HornetProcessingResult(HornetProcessingResult.Type.INVALID)
+
+        # Compute the new shared keys (forward secrecy)
+        fwd_shared_keys = self._compute_session_shared_keys(
+            session_request_info.forward_path_data.source_private,
+            session_request_info.forward_path_data.blinding_factors,
+            fwd_tmp_pubkeys)
+        bwd_shared_keys = self._compute_session_shared_keys(
+            session_request_info.backward_path_data.source_private,
+            session_request_info.backward_path_data.blinding_factors,
+            bwd_tmp_pubkeys)
         
+        # Add, for the backward path, the source's dummy forwarding segment
+        # and shared_key
+        source_dummy_fs = os.urandom(FS_LENGTH)
+        bwd_fses.append(source_dummy_fs)
+        source_shared_key = os.urandom(SHARED_KEY_LENGTH)
+        bwd_shared_keys.append(source_shared_key)
+
+        # Compute forward anonymous header and transmission path data
+        (fs, mac, blinded_aheader) = \
+            self._construct_basic_anonymous_header(fwd_shared_keys, fwd_fses)
+        fwd_path = session_request_info.forward_path_data.path
+        fwd_anonymous_header = AnonymousHeader(
+            packet_type=HornetPacketType.DATA_FWD, nonce=b'\0'*16,
+            current_fs=fs, current_mac=mac, blinded_aheader=blinded_aheader,
+            first_hop=fwd_path[0],
+            max_hops=self._sphinx_end_host.max_hops)
+        fwd_path_data = TransmissionPathData(fwd_anonymous_header,
+                                             fwd_shared_keys, fwd_path)
+        # Compute backward anonymous header and transmission path data
+        (fs, mac, blinded_aheader) = \
+            self._construct_basic_anonymous_header(bwd_shared_keys, bwd_fses)
+        bwd_path = session_request_info.backward_path_data.path
+        bwd_anonymous_header = AnonymousHeader(
+            packet_type=HornetPacketType.DATA_BWD, nonce=b'\0'*16,
+            current_fs=fs, current_mac=mac, blinded_aheader=blinded_aheader,
+            first_hop=session_request_info.backward_path_data.path[0],
+            max_hops=self._sphinx_end_host.max_hops)
+        bwd_path_data = TransmissionPathData(bwd_anonymous_header,
+                                             bwd_shared_keys, bwd_path)
+
+        # Store session and delete session request information
+        #FIXME:Daniele: Add protection against concurrent access
+        session_info = SessionInfo(session_request_info.session_id,
+                                   fwd_path_data, bwd_path_data,
+                                   source_dummy_fs)
+        self._open_sessions[session_request_info.session_id] = session_info
+        self.remove_session_request_info(session_id=
+                                         session_request_info.session_id)
 
         #FIXME:Daniele: Finish method (the return is incorrect)
         return HornetProcessingResult(HornetProcessingResult.Type
