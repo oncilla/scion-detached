@@ -22,14 +22,15 @@ limitations under the License.
 from lib.privacy.sphinx.sphinx_node import SphinxNode
 from lib.privacy.hornet_packet import get_packet_type, HornetPacketType,\
     TIMESTAMP_LENGTH, SHARED_KEY_LENGTH, ROUTING_INFO_LENGTH, FS_LENGTH,\
-    SetupPacket, MAC_SIZE
+    SetupPacket, MAC_SIZE, DataPacket, AnonymousHeader
 from lib.privacy.hornet_crypto_util import fs_shared_key_encrypt,\
     fs_shared_key_decrypt, generate_fs_encdec_iv, derive_fs_payload_stream_key,\
-    derive_fs_payload_mac_key
+    derive_fs_payload_mac_key, derive_aheader_mac_key, derive_aheader_stream_key,\
+    derive_new_nonce, derive_data_payload_stream_key
 from curve25519.keys import Private, Public
 import time
 from lib.privacy.sphinx.sphinx_crypto_util import stream_cipher_encrypt,\
-    stream_cipher_decrypt, compute_mac
+    stream_cipher_decrypt, compute_mac, verify_mac
 from lib.privacy.common.exception import PacketParsingException
 from lib.privacy.hornet_processing import HornetProcessingResult
 
@@ -210,7 +211,69 @@ class HornetNode(object):
         (:class:`hornet_packet.DataPacket`), and return an instance of class
         :class:`hornet_processing.HornetProcessingResult`.
         """
-        #TODO:Daniele: implement
+        try:
+            packet = DataPacket.parse_bytes_to_packet(raw_packet)
+        except PacketParsingException:
+            return HornetProcessingResult(HornetProcessingResult.Type.INVALID)
+
+        # Retrieve the shared key and use it to verify the integrity of the
+        # anonymous header
+        forwarding_segment = packet.header.current_fs
+        shared_key = fs_shared_key_decrypt(self.secret_key,
+            forwarding_segment[:SHARED_KEY_LENGTH])
+        mac = packet.header.current_mac
+        blinded_header = packet.header.blinded_aheader
+        if not verify_mac(derive_aheader_mac_key(shared_key),
+                          forwarding_segment + blinded_header, mac):
+            return HornetProcessingResult(HornetProcessingResult.Type.INVALID)
+
+        # Retrieve the rest of the encrypted state - routing info and
+        # expiration time - and check that the session has not expired yet
+        fs_iv = generate_fs_encdec_iv(shared_key)
+        fs_info = stream_cipher_decrypt(self.secret_key,
+                                        forwarding_segment[SHARED_KEY_LENGTH:],
+                                        fs_iv)
+        routing_info = fs_info[:ROUTING_INFO_LENGTH]
+        raw_expiration_time = fs_info[ROUTING_INFO_LENGTH:
+                                      ROUTING_INFO_LENGTH + TIMESTAMP_LENGTH]
+        expiration_time = int.from_bytes(raw_expiration_time, "big")
+        assert len(fs_info) == ROUTING_INFO_LENGTH + TIMESTAMP_LENGTH
+        if expiration_time <= int(time.time()):
+            return HornetProcessingResult(HornetProcessingResult.Type.INVALID)
+
+        # Process the blinded header to obtain the forwarding segment and mac
+        # for the next hop
+        aheader_stream_key = derive_aheader_stream_key(shared_key)
+        pad_size = FS_LENGTH + MAC_SIZE
+        decrypted_blinded_header = stream_cipher_decrypt(aheader_stream_key,
+                                                         blinded_header +
+                                                         b'\0'*pad_size)
+        next_forwarding_segment = decrypted_blinded_header[:FS_LENGTH]
+        next_mac = decrypted_blinded_header[FS_LENGTH:FS_LENGTH + MAC_SIZE]
+        next_blinded_aheader = decrypted_blinded_header[FS_LENGTH + MAC_SIZE:
+                                                        FS_LENGTH + MAC_SIZE +
+                                                        len(blinded_header)]
+
+        # Process the payload
+        processed_nonce = derive_new_nonce(shared_key, packet.header.nonce)
+        payload_stream_key = derive_data_payload_stream_key(shared_key)
+        if packet.get_type() == HornetPacketType.DATA_BWD:
+            next_payload = stream_cipher_encrypt(payload_stream_key,
+                                                 packet.payload,
+                                                 processed_nonce)
+        else:
+            next_payload = stream_cipher_decrypt(payload_stream_key,
+                                                 packet.payload,
+                                                 processed_nonce)
+
+        # Construct the next packet and return the result
+        next_header = AnonymousHeader(packet.get_type(),
+                                      processed_nonce, next_forwarding_segment,
+                                      next_mac, next_blinded_aheader,
+                                      routing_info, packet.header.max_hops)
+        next_packet = DataPacket(next_header, next_payload)
+        return HornetProcessingResult(HornetProcessingResult.Type.FORWARD,
+                                      packet_to_send=next_packet)
 
 
 def test():

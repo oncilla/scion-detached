@@ -143,7 +143,7 @@ class HornetSource(HornetNode):
 
     def create_new_session_request(self, fwd_path, fwd_pubkeys, bwd_path,
                                    bwd_pubkeys, session_expiration_time,
-                                   valid_for_seconds = None):
+                                   valid_for_seconds=None):
         """
         Construct the first packet of the setup, and store information about
         the session request, returning a request_id referring to it.
@@ -271,7 +271,8 @@ class HornetSource(HornetNode):
             tmp_pubkey = node_pubkey
             for blinding_factor in blinding_factors[:i]:
                 tmp_pubkey = blinding_factor.get_shared_public(tmp_pubkey)
-            shared_keys.append(source_tmp_private.get_shared_key(tmp_pubkey))
+            full_shared_key = source_tmp_private.get_shared_key(tmp_pubkey)
+            shared_keys.append(full_shared_key[:SHARED_KEY_LENGTH])
         return shared_keys
 
     @staticmethod
@@ -282,6 +283,9 @@ class HornetSource(HornetNode):
         following triple: (first_fs, first_mac, blinded_aheader).
         """
         assert len(shared_keys) == len(forwarding_segments)
+        for shared_key in shared_keys:
+            assert isinstance(shared_key, bytes)
+            assert len(shared_key) == SHARED_KEY_LENGTH
         pad_size = FS_LENGTH + MAC_SIZE
         blinded_aheader_size = compute_blinded_aheader_size()
         aheader_size = pad_size + blinded_aheader_size
@@ -306,15 +310,16 @@ class HornetSource(HornetNode):
                           filler)
         fs = forwarding_segments[-1]
         mac = compute_mac(mac_keys[-1], fs + blinded_aheader)
+        a_header = fs + mac + blinded_aheader
         for fs, stream_key, mac_key in zip(reversed(forwarding_segments[:-1]),
                                            reversed(stream_keys[:-1]),
                                            reversed(mac_keys[:-1])):
-            a_header = fs + mac + blinded_aheader
             padded_blinded_aheader = stream_cipher_encrypt(stream_key,
                                                            a_header)
             blinded_aheader = padded_blinded_aheader[:-pad_size]
             assert padded_blinded_aheader[-pad_size:] == b'\0'*pad_size
             mac = compute_mac(mac_key, fs + blinded_aheader)
+            a_header = fs + mac + blinded_aheader
         return (fs, mac, blinded_aheader)
 
     @staticmethod
@@ -361,6 +366,8 @@ class HornetSource(HornetNode):
             fs_payload = (tmp_payload[FS_LENGTH + GROUP_ELEM_LENGTH:] +
                           dropped_paddings.pop())
         assert fs_payload == initial_fs_payload
+        fs_list.reverse()
+        pubkey_list.reverse()
         return (fs_list, pubkey_list)
 
     def process_setup_packet(self, raw_packet):
@@ -566,20 +573,20 @@ class HornetDestination(HornetNode):
 
 def test():
     # Source
-    source_private = Private()
+    source_private = Private(secret=b'S'*32)
     source_secret_key = b's'*32
     source = HornetSource(source_secret_key, source_private)
 
     # Nodes
-    node_1_private = Private()
-    node_2_private = Private()
+    node_1_private = Private(secret=b'A'*32)
+    node_2_private = Private(secret=b'B'*32)
     node_1_secret_key = b'1'*32
     node_2_secret_key = b'2'*32
     node_1 = HornetNode(node_1_secret_key, node_1_private)
     node_2 = HornetNode(node_2_secret_key, node_2_private)
 
     # Destination
-    dest_private = Private()
+    dest_private = Private(secret=b'D'*32)
     dest_secret_key = b'd'*32
     destination = HornetDestination(dest_secret_key, dest_private)
 
@@ -589,7 +596,7 @@ def test():
     fwd_pubkeys = [node_1_private.get_public(), node_2_private.get_public(),
                     destination.public]
     bwd_pubkeys = [fwd_pubkeys[1], fwd_pubkeys[0], source.public]
-    session_expiration_time = int(time.time()) + 60
+    session_expiration_time = int(time.time()) + 600
     sid, packet = source.create_new_session_request(fwd_path, fwd_pubkeys,
                                                     bwd_path, bwd_pubkeys,
                                                     session_expiration_time)
@@ -676,6 +683,25 @@ def test():
     assert (len(new_packet.header.blinded_aheader) ==
             compute_blinded_aheader_size())
     assert new_packet.get_first_hop() == fwd_path[0]
+    previous_nonce = new_packet.header.nonce
+    raw_packet = new_packet.pack()
+
+    # Node 1 data packet processing
+    result = node_1.process_incoming_packet(raw_packet)
+    assert result.result_type == HornetProcessingResult.Type.FORWARD
+    new_packet = result.packet_to_send
+    assert new_packet is not None
+    assert new_packet.get_type() == HornetPacketType.DATA_FWD_SESSION
+    assert len(new_packet.header.nonce) == NONCE_LENGTH
+    assert new_packet.header.nonce != b'\0'*16
+    assert new_packet.header.nonce != previous_nonce
+    assert len(new_packet.header.current_fs) == FS_LENGTH
+    assert len(new_packet.header.current_mac) == MAC_SIZE
+    assert (len(new_packet.header.blinded_aheader) ==
+            compute_blinded_aheader_size())
+    assert new_packet.get_first_hop() == fwd_path[1]
+    previous_nonce = new_packet.header.nonce
+    raw_packet = new_packet.pack()
 
 
 if __name__ == "__main__":
