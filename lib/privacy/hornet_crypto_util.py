@@ -55,6 +55,7 @@ def derive_aheader_stream_key(shared_key):
     will be used to process the FS payload.
     """
     assert isinstance(shared_key, bytes)
+    assert len(shared_key) == SHARED_KEY_LENGTH
     return sha256(b"hornet-keyderivation-aheader-stream:" +
                   shared_key).digest()
 
@@ -65,6 +66,7 @@ def derive_aheader_mac_key(shared_key):
     will be used to MAC the FS payload.
     """
     assert isinstance(shared_key, bytes)
+    assert len(shared_key) == SHARED_KEY_LENGTH
     return sha256(b"hornet-keyderivation-aheader-mac:" + shared_key).digest()
 
 
@@ -74,6 +76,7 @@ def derive_data_payload_stream_key(shared_key):
     will be used to onion-encrypt/decrypt the data payload.
     """
     assert isinstance(shared_key, bytes)
+    assert len(shared_key) == SHARED_KEY_LENGTH
     return sha256(b"hornet-keyderivation-data-payload-stream:" +
                   shared_key).digest()
 
@@ -83,6 +86,8 @@ def derive_new_nonce(shared_key, received_nonce):
     Derive the new nonce to use for the data payload onion-encryption/
     decryption from the nonce received in the packet header.
     """
+    assert isinstance(shared_key, bytes)
+    assert len(shared_key) == SHARED_KEY_LENGTH
     hash_object = sha256(b"hornet-noncederivation-new-nonce:" + shared_key +
                          received_nonce)
     return hash_object.digest()[:NONCE_LENGTH]
@@ -108,6 +113,8 @@ def generate_fs_encdec_iv(shared_key):
     Generate the initialization vector (IV) to the encryption/decryption of the
     data in a forwarding segment.
     """
+    assert isinstance(shared_key, bytes)
+    assert len(shared_key) == SHARED_KEY_LENGTH
     hash_object = sha256(b"hornet-ivderivation-fs-encdec-iv:"+shared_key)
     return hash_object.digest()[:16]
 
