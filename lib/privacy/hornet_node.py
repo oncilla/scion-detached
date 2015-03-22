@@ -35,6 +35,15 @@ from lib.privacy.common.exception import PacketParsingException
 from lib.privacy.hornet_processing import HornetProcessingResult
 
 
+class InvalidCarriedStateException(Exception):
+    """
+    Exception indicating that the retrieval of the state carried in a
+    forwarding segment failed (e.g., because of a failed MAC check, or because
+    it has expired.
+    """
+    pass
+
+
 class HornetNode(object):
     """
     A Hornet node, able to process packets of the setup phase
@@ -111,22 +120,45 @@ class HornetNode(object):
                                                     expiration_time, fs_iv)
         return forwarding_segment
 
-    def decrypt_forwarding_segment(self, forwarding_segment):
+    def decrypt_forwarding_segment(self, forwarding_segment, mac=None,
+                                   blinded_header=None):
         """
-        Decrypt a forwarding segment and return the data it contained, which
-        will be a tuple of the form (shared_key, routing_info, expiration_time)
+        Decrypts a forwarding segment and returns the data it contained,
+        a tuple of the form (shared_key, routing_info, expiration_time).
+        If parameters mac and blinded_header are provided this method checks
+        the integrity of the data using the MAC. If the MAC verification fails,
+        or if the session has expired, an :class:`InvalidCarriedStateException`
+        is raised.
         """
         assert isinstance(forwarding_segment, bytes)
         assert len(forwarding_segment) == FS_LENGTH
-        encrypted_fs_shared_key = forwarding_segment[:SHARED_KEY_LENGTH]
+        if mac is not None:
+            assert isinstance(mac, bytes)
+            assert len(mac) == MAC_SIZE
+            assert blinded_header is not None, ("Provide also the blinded"
+                                                "header for the verification")
+        else:
+            assert blinded_header is None, ("Provide mac and blinded header, "
+                                            "either both or none")
+        # Retrieve the shared key, and use it to verify the integrity of the
+        # anonymous header if the mac and blinded header are provided
         shared_key = fs_shared_key_decrypt(self.secret_key,
-                                           encrypted_fs_shared_key)
+            forwarding_segment[:SHARED_KEY_LENGTH])
+        if (mac is not None and
+            not verify_mac(derive_aheader_mac_key(shared_key),
+                           forwarding_segment + blinded_header, mac)):
+            raise InvalidCarriedStateException("MAC check failed")
+
+        # Retrieve the rest of the encrypted state - routing info and
+        # expiration time - and check that the session has not expired yet
         fs_iv = generate_fs_encdec_iv(shared_key)
         raw = stream_cipher_decrypt(self.secret_key,
                                     forwarding_segment[SHARED_KEY_LENGTH:],
                                     fs_iv)
         routing_info = raw[:ROUTING_INFO_LENGTH]
-        expiration_time = raw[ROUTING_INFO_LENGTH:]
+        expiration_time = int.from_bytes(raw[ROUTING_INFO_LENGTH:], "big")
+        if expiration_time <= int(time.time()):
+            raise InvalidCarriedStateException("session state expired")
         return (shared_key, routing_info, expiration_time)
 
     @staticmethod
@@ -216,29 +248,17 @@ class HornetNode(object):
         except PacketParsingException:
             return HornetProcessingResult(HornetProcessingResult.Type.INVALID)
 
-        # Retrieve the shared key and use it to verify the integrity of the
-        # anonymous header
+        # Retrieve the shared key and verify the integrity of the header, and
+        # retrieve also the rest of the encrypted state - routing info and
+        # expiration time - checking that the session has not expired yet
         forwarding_segment = packet.header.current_fs
-        shared_key = fs_shared_key_decrypt(self.secret_key,
-            forwarding_segment[:SHARED_KEY_LENGTH])
         mac = packet.header.current_mac
         blinded_header = packet.header.blinded_aheader
-        if not verify_mac(derive_aheader_mac_key(shared_key),
-                          forwarding_segment + blinded_header, mac):
-            return HornetProcessingResult(HornetProcessingResult.Type.INVALID)
-
-        # Retrieve the rest of the encrypted state - routing info and
-        # expiration time - and check that the session has not expired yet
-        fs_iv = generate_fs_encdec_iv(shared_key)
-        fs_info = stream_cipher_decrypt(self.secret_key,
-                                        forwarding_segment[SHARED_KEY_LENGTH:],
-                                        fs_iv)
-        routing_info = fs_info[:ROUTING_INFO_LENGTH]
-        raw_expiration_time = fs_info[ROUTING_INFO_LENGTH:
-                                      ROUTING_INFO_LENGTH + TIMESTAMP_LENGTH]
-        expiration_time = int.from_bytes(raw_expiration_time, "big")
-        assert len(fs_info) == ROUTING_INFO_LENGTH + TIMESTAMP_LENGTH
-        if expiration_time <= int(time.time()):
+        try:
+            shared_key, routing_info, _ = \
+                self.decrypt_forwarding_segment(forwarding_segment, mac,
+                                                blinded_header)
+        except InvalidCarriedStateException:
             return HornetProcessingResult(HornetProcessingResult.Type.INVALID)
 
         # Process the blinded header to obtain the forwarding segment and mac
@@ -283,7 +303,7 @@ def test():
 
     shared_key = b'2'*16
     routing_info = b'3'*ROUTING_INFO_LENGTH
-    expiration_time = int(time.time()).to_bytes(TIMESTAMP_LENGTH, "big")
+    expiration_time = int(time.time() + 10)
     forwarding_segment = node.create_forwarding_segment(shared_key,
                                                         routing_info,
                                                         expiration_time)
