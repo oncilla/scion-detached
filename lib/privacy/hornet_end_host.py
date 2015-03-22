@@ -25,9 +25,10 @@ from lib.privacy.sphinx.sphinx_end_host import SphinxEndHost,\
 import uuid
 from curve25519.keys import Private, Public
 from lib.privacy.session import SetupPathData, SessionRequestInfo,\
-    TransmissionPathData, SessionInfo
+    TransmissionPathData, SessionInfo, SourceSessionInfo
 from lib.privacy.hornet_packet import compute_fs_payload_size, SetupPacket,\
-    HornetPacketType, SHARED_KEY_LENGTH, FS_LENGTH, compute_blinded_aheader_size,\
+    HornetPacketType, SHARED_KEY_LENGTH, FS_LENGTH,\
+    compute_blinded_aheader_size,\
     AnonymousHeader, NONCE_LENGTH, DATA_PAYLOAD_LENGTH, DataPacket
 from lib.privacy.hornet_crypto_util import generate_initial_fs_payload,\
     derive_fs_payload_stream_key, derive_fs_payload_mac_key,\
@@ -62,7 +63,51 @@ class InvalidSession(Exception):
     pass
 
 
-class HornetSource(HornetNode):
+class HornetEndHost():
+    """
+    Abstract base class for a Hornet end host, source or destination.
+    """
+
+    def __init__(self):
+        self._open_sessions_by_fs = dict()
+        self._open_sessions_by_session_id = dict()
+
+    def add_session_info(self, session_info):
+        """
+        Store a :class:`session.SessionInfo` instance for a new session.
+        """
+        assert isinstance(session_info, SessionInfo)
+        self._open_sessions_by_session_id[session_info.session_id] = \
+            session_info
+        self._open_sessions_by_fs[session_info.forwarding_segment] = \
+            session_info
+
+    def remove_session_info(self, session_id=None, forwarding_segment=None):
+        """
+        Remove a :class:`session.SessionInfo` instance identified
+        through its session id or forwarding segment. This method does nothing
+        if the given id or forwarding segment is not associated to any
+        existing session.
+        """
+        assert [session_id, forwarding_segment].count(None) == 1
+        if (session_id is not None and
+            session_id in self._open_sessions_by_session_id):
+            assert isinstance(session_id, int)
+            forwarding_segment = (self._open_sessions_by_session_id[session_id]
+                                  .forwarding_segment)
+        elif (forwarding_segment is not None and
+              forwarding_segment in self._open_sessions_by_fs):
+            assert isinstance(forwarding_segment, bytes)
+            session_id = (self._open_sessions_by_fs[forwarding_segment]
+                          .session_id)
+        else:
+            return # session_id already deleted
+        del self._open_sessions_by_session_id[session_id]
+        del self._open_sessions_by_fs[forwarding_segment]
+
+
+
+class HornetSource(HornetEndHost, HornetNode):
     """
     A Hornet source, able to establish a session and to exchange data packets
     (:class:`hornet_packet.DataPacket`).
@@ -78,11 +123,11 @@ class HornetSource(HornetNode):
     def __init__(self, secret_key, private, public=None):
         assert isinstance(secret_key, bytes)
         self._sphinx_end_host = SphinxEndHost(private, public)
-        super().__init__(secret_key, sphinx_node=self._sphinx_end_host)
+        HornetEndHost.__init__(self)
+        HornetNode.__init__(self, secret_key,
+                            sphinx_node=self._sphinx_end_host)
         self._session_requests_by_reply_id = dict()
         self._session_requests_by_session_id = dict()
-        self._open_sessions_by_source_fs = dict()
-        self._open_sessions_by_session_id = dict()
 
     def add_session_request_info(self, session_request_info):
         """
@@ -112,34 +157,6 @@ class HornetSource(HornetNode):
             return # session_id already deleted
         del self._session_requests_by_session_id[session_id]
         del self._session_requests_by_reply_id[reply_id]
-
-    def add_session_info(self, session_info):
-        """
-        Store a :class:`session.SessionInfo` instance for a new session.
-        """
-        assert isinstance(session_info, SessionInfo)
-        self._open_sessions_by_session_id[session_info.session_id] = \
-            session_info
-        self._open_sessions_by_source_fs[session_info.source_fs] = \
-            session_info
-
-    def remove_session_info(self, session_id=None, source_fs=None):
-        """
-        Remove a :class:`session.SessionInfo` instance identified
-        through its session id or source fs. This method does nothing if the
-        given id is not associated to any existing session.
-        """
-        assert [session_id, source_fs].count(None) == 1
-        if session_id in self._open_sessions_by_session_id:
-            source_fs = (self._open_sessions_by_session_id[session_id]
-                         .source_fs)
-        elif source_fs in self._open_sessions_by_source_fs:
-            session_id = (self._open_sessions_by_source_fs[source_fs]
-                          .session_id)
-        else:
-            return # session_id already deleted
-        del self._open_sessions_by_session_id[session_id]
-        del self._open_sessions_by_source_fs[source_fs]
 
     def create_new_session_request(self, fwd_path, fwd_pubkeys, bwd_path,
                                    bwd_pubkeys, session_expiration_time,
@@ -471,9 +488,9 @@ class HornetSource(HornetNode):
 
         # Store session and delete session request information
         #FIXME:Daniele: Add protection against concurrent access
-        session_info = SessionInfo(session_request_info.session_id,
-                                   fwd_path_data, bwd_path_data,
-                                   source_dummy_fs)
+        session_info = SourceSessionInfo(session_request_info.session_id,
+                                         fwd_path_data, bwd_path_data,
+                                         source_dummy_fs)
         self.add_session_info(session_info)
         self.remove_session_request_info(session_id=
                                          session_request_info.session_id)
@@ -491,7 +508,7 @@ class HornetSource(HornetNode):
                                       packet_to_send=next_packet)
 
 
-class HornetDestination(HornetNode):
+class HornetDestination(HornetEndHost, HornetNode):
     """
     A Hornet destination.
 
@@ -505,8 +522,8 @@ class HornetDestination(HornetNode):
 
     def __init__(self, secret_key, private, public=None):
         assert isinstance(secret_key, bytes)
-        super().__init__(secret_key, private=private)
-        self._open_sessions = dict()
+        HornetEndHost.__init__(self)
+        HornetNode.__init__(self, secret_key, private=private)
 
     def process_setup_packet(self, raw_packet):
         """

@@ -21,7 +21,9 @@ limitations under the License.
 """
 from curve25519.keys import Private
 import time
-from lib.privacy.hornet_packet import AnonymousHeader, FS_LENGTH
+from lib.privacy.hornet_packet import AnonymousHeader, FS_LENGTH,\
+    SHARED_KEY_LENGTH, compute_blinded_aheader_size
+from lib.privacy.common.constants import MAC_SIZE
 
 
 # Min, max and default lifetime of a session request in seconds
@@ -144,6 +146,35 @@ class SessionRequestInfo(object):
 
 class SessionInfo(object):
     """
+    Information relating to an established session. This is a base class
+    to be used by any :class:`hornet_end_host.HornetEndHost`, i.e. both
+    source and destination.
+
+    :ivar session_id: Identifier of the session (for the caller).
+    :vartype session_id: int
+    :ivar incoming_forwarding_segment: forwarding segment of the end host,
+        part of the forward :class:`hornet_packet.AnonymousHeader` that allows
+        the end host to match an incoming data packet to an open session.
+    :vartype incoming_forwarding_segment: bytes
+    :ivar time_created: timestamp indicating the time when the session was
+        established
+    :vartype time_created: int
+    :ivar expiration_time: timestamp indicating the time after which the
+        session will be considered to be expired.
+    :vartype expiration_time: int
+    """
+
+    def __init__(self, session_id, incoming_forwarding_segment, expiration_time):
+        assert isinstance(session_id, int)
+        assert isinstance(expiration_time, int)
+        assert isinstance(incoming_forwarding_segment, bytes)
+        self.session_id = session_id
+        self.forwarding_segment = incoming_forwarding_segment
+        self.time_created = int(time.time())
+        self.expiration_time = expiration_time
+
+class SourceSessionInfo(SessionInfo):
+    """
     Information relating to an established session.
 
     :ivar session_id: Identifier of the session (for the caller).
@@ -152,34 +183,85 @@ class SessionInfo(object):
     :vartype forward_path_data: :class:`TransmissionPathData`
     :ivar backward_path_data: Data about the backward path
     :vartype backward_path_data: :class:`TransmissionPathData`
-    :ivar source_fs: dummy forwarding segment of the source, part of the
-        backward :class:`hornet_packet.AnonymousHeader` that allows the source
-        to match an incoming data packet to an open session.
+    :ivar incoming_forwarding_segment: dummy forwarding segment of the source,
+        part of the backward :class:`hornet_packet.AnonymousHeader` that allows
+        the source to match an incoming data packet to an open session.
+    :vartype incoming_forwarding_segment: bytes
     :ivar time_created: timestamp indicating the time when the session was
         established
     :vartype time_created: int
     :ivar expiration_time: timestamp indicating the time after which the
-        request will be considered to be expired.
+        session will be considered to be expired.
     :vartype expiration_time: int
     """
 
     def __init__(self, session_id, forward_path_data, backward_path_data,
-                 source_fs, valid_for_seconds=None):
-        assert isinstance(session_id, int)
+                 incoming_forwarding_segment, valid_for_seconds=None):
         assert isinstance(forward_path_data, TransmissionPathData)
         assert isinstance(backward_path_data, TransmissionPathData)
-        assert isinstance(source_fs, bytes)
-        assert len(source_fs) == FS_LENGTH
+        assert isinstance(incoming_forwarding_segment, bytes)
+        assert len(incoming_forwarding_segment) == FS_LENGTH
         if valid_for_seconds is not None:
             assert isinstance(valid_for_seconds, int)
             if valid_for_seconds < 0:
                 raise ValueError("session lifetime must be positive")
         else:
             valid_for_seconds = DEFAULT_SESSION_DURATION_SEC
-        self.session_id = session_id
+        SessionInfo.__init__(self, session_id, incoming_forwarding_segment,
+                             int(time.time()) + valid_for_seconds)
         self.forward_path_data = forward_path_data
         self.backward_path_data = backward_path_data
-        self.source_fs = source_fs
-        self.time_created = int(time.time())
-        self.expiration_time = self.time_created + valid_for_seconds
+
+
+class DestinationSessionInfo(SessionInfo):
+    """
+    Information relating to an established session on the destination.
+
+    :ivar session_id: Identifier of the session (for the caller).
+    :vartype session_id: int
+    :ivar shared_key: key shared with the source.
+    :vartype shared_key: bytes
+    :ivar incoming_forwarding_segment: forwarding segment of the destination,
+        part of the forward :class:`hornet_packet.AnonymousHeader` that allows
+        the destination to match an incoming data packet to an open session.
+    :vartype incoming_forwarding_segment: bytes
+    :ivar incoming_mac: mac of the incoming packet, used together with the
+        incoming_forwarding_segment and the incoming_blinded_header to quickly
+        verify the integrity of the header of an incoming data packet by simply
+        checking for the equality of the values to those verified at the
+        receipt of the first data packet (when the session is created).
+    :vartype incoming_mac: bytes
+    :ivar incoming_blinded_header: blinded_header of the incoming packet, used
+        together with the incoming_forwarding_segment and the incoming_mac to
+        quickly verify the integrity of the header of an incoming data packet
+        by simply checking for the equality of the values to those verified at
+        the receipt of the first data packet (when the session is created).
+    :vartype incoming_blinded_header: bytes
+    :ivar backward_anonymous_header: Anonymous header for the backward path
+        (from the destination to the source)
+    :vartype backward_anonymous_header: :class:`hornet_packet.AnonymousHeader`
+    :ivar time_created: timestamp indicating the time when the session was
+        established
+    :vartype time_created: int
+    :ivar expiration_time: timestamp indicating the time after which the
+        session will be considered to be expired.
+    :vartype expiration_time: int
+    """
+
+    def __init__(self, session_id, shared_key, incoming_forwarding_segment,
+                 incoming_mac, incoming_blinded_aheader, backward_anonymous_header,
+                 expiration_time):
+        assert isinstance(shared_key, bytes)
+        assert len(shared_key) == SHARED_KEY_LENGTH
+        assert isinstance(incoming_mac, bytes)
+        assert len(incoming_mac) == MAC_SIZE
+        assert isinstance(incoming_blinded_aheader, bytes)
+        assert len(incoming_blinded_aheader) == compute_blinded_aheader_size()
+        assert isinstance(backward_anonymous_header, AnonymousHeader)
+        SessionInfo.__init__(self, session_id, incoming_forwarding_segment,
+                             expiration_time)
+        self.incoming_mac = incoming_mac
+        self.incoming_blinded_aheader = incoming_blinded_aheader
+        self.shared_key = shared_key
+        self.backward_anonymous_header = backward_anonymous_header
 
