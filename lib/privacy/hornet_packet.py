@@ -294,8 +294,11 @@ class AnonymousHeader(object):
                  blinded_aheader, first_hop=None, max_hops=DEFAULT_MAX_HOPS):
         assert isinstance(packet_type, int)
         assert isinstance(nonce, bytes)
+        assert len(nonce) == NONCE_LENGTH
         assert isinstance(current_fs, bytes)
+        assert len(current_fs) == FS_LENGTH
         assert isinstance(current_mac, bytes)
+        assert len(current_mac) == MAC_SIZE
         assert isinstance(blinded_aheader, bytes)
         assert first_hop is None or isinstance(first_hop, bytes)
         assert isinstance(max_hops, int)
