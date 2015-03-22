@@ -19,17 +19,18 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
-from lib.privacy.hornet_node import HornetNode
+from lib.privacy.hornet_node import HornetNode, InvalidCarriedStateException
 from lib.privacy.sphinx.sphinx_end_host import SphinxEndHost,\
     compute_shared_keys
 import uuid
 from curve25519.keys import Private, Public
 from lib.privacy.session import SetupPathData, SessionRequestInfo,\
-    TransmissionPathData, SessionInfo, SourceSessionInfo
+    TransmissionPathData, SessionInfo, SourceSessionInfo, DestinationSessionInfo
 from lib.privacy.hornet_packet import compute_fs_payload_size, SetupPacket,\
     HornetPacketType, SHARED_KEY_LENGTH, FS_LENGTH,\
     compute_blinded_aheader_size,\
-    AnonymousHeader, NONCE_LENGTH, DATA_PAYLOAD_LENGTH, DataPacket
+    AnonymousHeader, NONCE_LENGTH, DATA_PAYLOAD_LENGTH, DataPacket,\
+    ROUTING_INFO_LENGTH
 from lib.privacy.hornet_crypto_util import generate_initial_fs_payload,\
     derive_fs_payload_stream_key, derive_fs_payload_mac_key,\
     derive_aheader_stream_key, derive_aheader_mac_key, derive_new_nonce,\
@@ -43,7 +44,8 @@ from lib.privacy.common.constants import LOCALHOST_ADDRESS,\
     DEFAULT_ADDRESS_LENGTH, GROUP_ELEM_LENGTH, MAC_SIZE
 import itertools
 from lib.privacy.sphinx.sphinx_crypto_util import stream_cipher_encrypt,\
-    verify_mac, stream_cipher_decrypt, compute_mac, pad_to_length
+    verify_mac, stream_cipher_decrypt, compute_mac, pad_to_length,\
+    remove_length_pad
 import copy
 
 
@@ -468,7 +470,7 @@ class HornetSource(HornetEndHost, HornetNode):
             self._construct_basic_anonymous_header(fwd_shared_keys, fwd_fses)
         fwd_path = session_request_info.forward_path_data.path
         fwd_anonymous_header = AnonymousHeader(
-            packet_type=HornetPacketType.DATA_FWD, nonce=b'\0'*16,
+            packet_type=HornetPacketType.DATA_FWD, nonce=b'\0'*NONCE_LENGTH,
             current_fs=fs, current_mac=mac, blinded_aheader=blinded_aheader,
             first_hop=fwd_path[0],
             max_hops=self._sphinx_end_host.max_hops)
@@ -479,7 +481,7 @@ class HornetSource(HornetEndHost, HornetNode):
             self._construct_basic_anonymous_header(bwd_shared_keys, bwd_fses)
         bwd_path = session_request_info.backward_path_data.path
         bwd_anonymous_header = AnonymousHeader(
-            packet_type=HornetPacketType.DATA_BWD, nonce=b'\0'*16,
+            packet_type=HornetPacketType.DATA_BWD, nonce=b'\0'*NONCE_LENGTH,
             current_fs=fs, current_mac=mac, blinded_aheader=blinded_aheader,
             first_hop=session_request_info.backward_path_data.path[0],
             max_hops=self._sphinx_end_host.max_hops)
@@ -586,6 +588,78 @@ class HornetDestination(HornetEndHost, HornetNode):
         return HornetProcessingResult(HornetProcessingResult
                                       .Type.SESSION_REQUEST,
                                       packet_to_send=second_packet)
+
+    def process_data_packet(self, raw_packet):
+        """
+        Process an incoming Hornet data packet
+        (:class:`hornet_packet.DataPacket`), and return an instance of class
+        :class:`hornet_processing.HornetProcessingResult`.
+        """
+        try:
+            packet = DataPacket.parse_bytes_to_packet(raw_packet)
+        except PacketParsingException:
+            return HornetProcessingResult(HornetProcessingResult.Type.INVALID)
+
+        forwarding_segment = packet.header.current_fs
+        mac = packet.header.current_mac
+        blinded_header = packet.header.blinded_aheader
+        if packet.get_type() == HornetPacketType.DATA_FWD_SESSION:
+            # Retrieve the shared key and verify the integrity of the header,
+            # and retrieve also the rest of the encrypted state - routing info
+            # and expiration time - checking that the session has not expired
+            try:
+                shared_key, routing_info, expiration_time = \
+                    self.decrypt_forwarding_segment(forwarding_segment, mac,
+                                                    blinded_header)
+            except InvalidCarriedStateException:
+                return HornetProcessingResult(HornetProcessingResult.
+                                              Type.INVALID)
+            if routing_info != LOCALHOST_ADDRESS:
+                #TODO:Daniele: Log this, should not happen
+                assert False, "Valid FS indicating forwarding encountered"
+                return HornetProcessingResult(HornetProcessingResult.
+                                              Type.INVALID)
+
+            # Retrieve backward header from the payload
+            payload_stream_key = derive_data_payload_stream_key(shared_key)
+            nonce = derive_new_nonce(shared_key, packet.header.nonce)
+            payload = stream_cipher_decrypt(payload_stream_key, packet.payload,
+                                            nonce)
+            payload = remove_length_pad(payload)
+            if len(payload) < DEFAULT_ADDRESS_LENGTH:
+                return HornetProcessingResult(HornetProcessingResult.
+                                              Type.INVALID)
+            bwd_first_hop = payload[:DEFAULT_ADDRESS_LENGTH]
+            raw_bwd_header = payload[DEFAULT_ADDRESS_LENGTH:]
+            try:
+                bwd_header = (
+                    AnonymousHeader.parse_bytes_to_header(raw_bwd_header))
+            except PacketParsingException:
+                return HornetProcessingResult(HornetProcessingResult.
+                                              Type.INVALID)
+            bwd_header.first_hop = bwd_first_hop
+
+            # Construct new DestinationSessionInfo object and store it
+            # pylint: disable=no-member
+            new_session_id = uuid.uuid4().int
+            # pylint: enable=no-member
+            session_info = DestinationSessionInfo(new_session_id, shared_key,
+                                                  forwarding_segment, mac,
+                                                  blinded_header, bwd_header,
+                                                  expiration_time)
+            self.add_session_info(session_info)
+
+            # Return to the caller informing it of the establishment of a new
+            # session, providing the new session id
+            return HornetProcessingResult(HornetProcessingResult.Type.
+                                          SESSION_ESTABLISHED, new_session_id)
+        elif packet.get_type() == HornetPacketType.DATA_FWD:
+            #FIXME:Daniele: finish this method
+            pass
+        else:
+            return HornetProcessingResult(HornetProcessingResult.
+                                              Type.INVALID)
+
 
 
 def test():
@@ -719,6 +793,28 @@ def test():
     assert new_packet.get_first_hop() == fwd_path[1]
     previous_nonce = new_packet.header.nonce
     raw_packet = new_packet.pack()
+
+    # Node 2 data packet processing
+    result = node_2.process_incoming_packet(raw_packet)
+    assert result.result_type == HornetProcessingResult.Type.FORWARD
+    new_packet = result.packet_to_send
+    assert new_packet is not None
+    assert new_packet.get_type() == HornetPacketType.DATA_FWD_SESSION
+    assert len(new_packet.header.nonce) == NONCE_LENGTH
+    assert new_packet.header.nonce != b'\0'*16
+    assert new_packet.header.nonce != previous_nonce
+    assert len(new_packet.header.current_fs) == FS_LENGTH
+    assert len(new_packet.header.current_mac) == MAC_SIZE
+    assert (len(new_packet.header.blinded_aheader) ==
+            compute_blinded_aheader_size())
+    assert new_packet.get_first_hop() == fwd_path[2]
+    previous_nonce = new_packet.header.nonce
+    raw_packet = new_packet.pack()
+
+    # Destination data packet processing
+    result = destination.process_incoming_packet(raw_packet)
+    assert (result.result_type ==
+            HornetProcessingResult.Type.SESSION_ESTABLISHED)
 
 
 if __name__ == "__main__":
