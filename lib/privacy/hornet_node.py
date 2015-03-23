@@ -33,6 +33,7 @@ from lib.privacy.sphinx.sphinx_crypto_util import stream_cipher_encrypt,\
     stream_cipher_decrypt, compute_mac, verify_mac
 from lib.privacy.common.exception import PacketParsingException
 from lib.privacy.hornet_processing import HornetProcessingResult
+from lib.privacy.common.constants import DEFAULT_MAX_HOPS
 
 
 class InvalidCarriedStateException(Exception):
@@ -58,7 +59,8 @@ class HornetNode(object):
     :vartype public: bytes
     """
 
-    def __init__(self, secret_key, private=None, public=None, sphinx_node=None):
+    def __init__(self, secret_key, private=None, public=None, sphinx_node=None,
+                 max_hops=DEFAULT_MAX_HOPS):
         assert isinstance(secret_key, bytes)
         if sphinx_node is not None:
             assert isinstance(sphinx_node, SphinxNode)
@@ -68,6 +70,7 @@ class HornetNode(object):
             assert private is not None, ("parameter private and sphinx_node"
                                          "cannot both be None")
             self._sphinx_node = SphinxNode(private, public)
+        self._sphinx_node.max_hops = max_hops
         self.secret_key = secret_key
 
     @property
@@ -296,10 +299,10 @@ class HornetNode(object):
                                       packet_to_send=next_packet)
 
 
-def test():
+def test(max_hops=DEFAULT_MAX_HOPS):
     private = Private()
     secret_key = b'1'*32
-    node = HornetNode(secret_key, private)
+    node = HornetNode(secret_key, private, max_hops=max_hops)
 
     shared_key = b'2'*16
     routing_info = b'3'*ROUTING_INFO_LENGTH
@@ -313,3 +316,5 @@ def test():
 
 if __name__ == "__main__":
     test()
+    test(5)
+    test(15)

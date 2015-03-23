@@ -42,7 +42,7 @@ from lib.privacy.hornet_processing import HornetProcessingResult
 from lib.privacy.common.exception import PacketParsingException
 from lib.privacy.sphinx.packet import SphinxHeader, SphinxPacket
 from lib.privacy.common.constants import LOCALHOST_ADDRESS,\
-    DEFAULT_ADDRESS_LENGTH, GROUP_ELEM_LENGTH, MAC_SIZE
+    DEFAULT_ADDRESS_LENGTH, GROUP_ELEM_LENGTH, MAC_SIZE, DEFAULT_MAX_HOPS
 import itertools
 from lib.privacy.sphinx.sphinx_crypto_util import stream_cipher_encrypt,\
     verify_mac, stream_cipher_decrypt, compute_mac, pad_to_length,\
@@ -127,12 +127,14 @@ class HornetSource(HornetEndHost, HornetNode):
     :vartype public: bytes
     """
 
-    def __init__(self, secret_key, private, public=None):
+    def __init__(self, secret_key, private, public=None, max_hops=DEFAULT_MAX_HOPS):
         assert isinstance(secret_key, bytes)
         self._sphinx_end_host = SphinxEndHost(private, public)
+        self._sphinx_end_host.max_hops = max_hops
         HornetEndHost.__init__(self)
         HornetNode.__init__(self, secret_key,
-                            sphinx_node=self._sphinx_end_host)
+                            sphinx_node=self._sphinx_end_host,
+                            max_hops=max_hops)
         self._session_requests_by_reply_id = dict()
         self._session_requests_by_session_id = dict()
 
@@ -304,8 +306,7 @@ class HornetSource(HornetEndHost, HornetNode):
             shared_keys.append(full_shared_key[:SHARED_KEY_LENGTH])
         return shared_keys
 
-    @staticmethod
-    def _construct_basic_anonymous_header(shared_keys, forwarding_segments):
+    def _construct_basic_anonymous_header(self, shared_keys, forwarding_segments):
         """
         Construct the fundamental part of an anonymous header
         (:class:`hornet_packet.AnonymousHeader`), which consists in the
@@ -320,7 +321,7 @@ class HornetSource(HornetEndHost, HornetNode):
             assert isinstance(shared_key, bytes)
             assert len(shared_key) == SHARED_KEY_LENGTH
         pad_size = FS_LENGTH + MAC_SIZE
-        blinded_aheader_size = compute_blinded_aheader_size()
+        blinded_aheader_size = compute_blinded_aheader_size(self._sphinx_end_host.max_hops)
         aheader_size = pad_size + blinded_aheader_size
         number_of_hops = len(shared_keys)
         stream_keys = [derive_aheader_stream_key(shared_key)
@@ -600,10 +601,10 @@ class HornetDestination(HornetEndHost, HornetNode):
     :vartype public: bytes
     """
 
-    def __init__(self, secret_key, private, public=None):
+    def __init__(self, secret_key, private, public=None, max_hops=DEFAULT_MAX_HOPS):
         assert isinstance(secret_key, bytes)
         HornetEndHost.__init__(self)
-        HornetNode.__init__(self, secret_key, private=private)
+        HornetNode.__init__(self, secret_key, private=private, max_hops=max_hops)
 
     def construct_data_packet(self, session_id, data):
         """
@@ -664,7 +665,8 @@ class HornetDestination(HornetEndHost, HornetNode):
             return HornetProcessingResult(HornetProcessingResult.Type.INVALID)
         first_hop = payload[:DEFAULT_ADDRESS_LENGTH]
         raw_header = payload[DEFAULT_ADDRESS_LENGTH:]
-        bwd_sphinx_header = SphinxHeader.parse_bytes_to_header(raw_header)
+        bwd_sphinx_header = SphinxHeader.parse_bytes_to_header(raw_header,
+            max_hops=self._sphinx_node.max_hops)
         # Create new shared_key (forward secrecy) from a new Private
         tmp_private = Private()
         source_public = Public(sphinx_processing_result.source_pubkey)
@@ -814,24 +816,24 @@ class HornetDestination(HornetEndHost, HornetNode):
 
 
 
-def test():
+def test(max_hops=DEFAULT_MAX_HOPS):
     # Source
     source_private = Private(secret=b'S'*32)
     source_secret_key = b's'*32
-    source = HornetSource(source_secret_key, source_private)
+    source = HornetSource(source_secret_key, source_private, max_hops=max_hops)
 
     # Nodes
     node_1_private = Private(secret=b'A'*32)
     node_2_private = Private(secret=b'B'*32)
     node_1_secret_key = b'1'*32
     node_2_secret_key = b'2'*32
-    node_1 = HornetNode(node_1_secret_key, node_1_private)
-    node_2 = HornetNode(node_2_secret_key, node_2_private)
+    node_1 = HornetNode(node_1_secret_key, node_1_private, max_hops=max_hops)
+    node_2 = HornetNode(node_2_secret_key, node_2_private, max_hops=max_hops)
 
     # Destination
     dest_private = Private(secret=b'D'*32)
     dest_secret_key = b'd'*32
-    destination = HornetDestination(dest_secret_key, dest_private)
+    destination = HornetDestination(dest_secret_key, dest_private, max_hops=max_hops)
 
     # Source session request
     fwd_path = [b'1'*16, b'2'*16, b'dest_address0000']
@@ -856,7 +858,7 @@ def test():
     #assert new_packet.max_hops == max_hops
     assert new_packet.expiration_time == session_expiration_time
     assert isinstance(new_packet.sphinx_packet, SphinxPacket)
-    assert len(new_packet.fs_payload) == compute_fs_payload_size()
+    assert len(new_packet.fs_payload) == compute_fs_payload_size(max_hops=max_hops)
     assert new_packet.get_first_hop() == fwd_path[1]
     raw_packet = new_packet.pack()
 
@@ -869,7 +871,7 @@ def test():
     #assert new_packet.max_hops == max_hops
     assert new_packet.expiration_time == session_expiration_time
     assert isinstance(new_packet.sphinx_packet, SphinxPacket)
-    assert len(new_packet.fs_payload) == compute_fs_payload_size()
+    assert len(new_packet.fs_payload) == compute_fs_payload_size(max_hops=max_hops)
     assert new_packet.get_first_hop() == fwd_path[2]
     raw_packet = new_packet.pack()
 
@@ -882,7 +884,7 @@ def test():
     #assert new_packet.max_hops == max_hops
     assert new_packet.expiration_time == session_expiration_time
     assert isinstance(new_packet.sphinx_packet, SphinxPacket)
-    assert len(new_packet.fs_payload) == compute_fs_payload_size()
+    assert len(new_packet.fs_payload) == compute_fs_payload_size(max_hops=max_hops)
     assert new_packet.get_first_hop() == bwd_path[0]
     raw_packet = new_packet.pack()
 
@@ -895,7 +897,7 @@ def test():
     #assert new_packet.max_hops == max_hops
     assert new_packet.expiration_time == session_expiration_time
     assert isinstance(new_packet.sphinx_packet, SphinxPacket)
-    assert len(new_packet.fs_payload) == compute_fs_payload_size()
+    assert len(new_packet.fs_payload) == compute_fs_payload_size(max_hops=max_hops)
     assert new_packet.get_first_hop() == bwd_path[1]
     raw_packet = new_packet.pack()
 
@@ -908,7 +910,7 @@ def test():
     #assert new_packet.max_hops == max_hops
     assert new_packet.expiration_time == session_expiration_time
     assert isinstance(new_packet.sphinx_packet, SphinxPacket)
-    assert len(new_packet.fs_payload) == compute_fs_payload_size()
+    assert len(new_packet.fs_payload) == compute_fs_payload_size(max_hops=max_hops)
     assert new_packet.get_first_hop() == bwd_path[2]
     raw_packet = new_packet.pack()
 
@@ -926,7 +928,7 @@ def test():
     assert len(new_packet.header.current_fs) == FS_LENGTH
     assert len(new_packet.header.current_mac) == MAC_SIZE
     assert (len(new_packet.header.blinded_aheader) ==
-            compute_blinded_aheader_size())
+            compute_blinded_aheader_size(max_hops=max_hops))
     assert new_packet.get_first_hop() == fwd_path[0]
     previous_nonce = new_packet.header.nonce
     raw_packet = new_packet.pack()
@@ -943,7 +945,7 @@ def test():
     assert len(new_packet.header.current_fs) == FS_LENGTH
     assert len(new_packet.header.current_mac) == MAC_SIZE
     assert (len(new_packet.header.blinded_aheader) ==
-            compute_blinded_aheader_size())
+            compute_blinded_aheader_size(max_hops=max_hops))
     assert new_packet.get_first_hop() == fwd_path[1]
     previous_nonce = new_packet.header.nonce
     raw_packet = new_packet.pack()
@@ -960,7 +962,7 @@ def test():
     assert len(new_packet.header.current_fs) == FS_LENGTH
     assert len(new_packet.header.current_mac) == MAC_SIZE
     assert (len(new_packet.header.blinded_aheader) ==
-            compute_blinded_aheader_size())
+            compute_blinded_aheader_size(max_hops=max_hops))
     assert new_packet.get_first_hop() == fwd_path[2]
     previous_nonce = new_packet.header.nonce
     raw_packet = new_packet.pack()
@@ -990,7 +992,7 @@ def test():
     assert len(new_packet.header.current_fs) == FS_LENGTH
     assert len(new_packet.header.current_mac) == MAC_SIZE
     assert (len(new_packet.header.blinded_aheader) ==
-            compute_blinded_aheader_size())
+            compute_blinded_aheader_size(max_hops=max_hops))
     assert new_packet.get_first_hop() == fwd_path[1]
     previous_nonce = new_packet.header.nonce
     raw_packet = new_packet.pack()
@@ -1007,7 +1009,7 @@ def test():
     assert len(new_packet.header.current_fs) == FS_LENGTH
     assert len(new_packet.header.current_mac) == MAC_SIZE
     assert (len(new_packet.header.blinded_aheader) ==
-            compute_blinded_aheader_size())
+            compute_blinded_aheader_size(max_hops=max_hops))
     assert new_packet.get_first_hop() == fwd_path[2]
     previous_nonce = new_packet.header.nonce
     raw_packet = new_packet.pack()
@@ -1037,7 +1039,7 @@ def test():
     assert len(new_packet.header.current_fs) == FS_LENGTH
     assert len(new_packet.header.current_mac) == MAC_SIZE
     assert (len(new_packet.header.blinded_aheader) ==
-            compute_blinded_aheader_size())
+            compute_blinded_aheader_size(max_hops=max_hops))
     assert new_packet.get_first_hop() == bwd_path[1]
     previous_nonce = new_packet.header.nonce
     raw_packet = new_packet.pack()
@@ -1054,7 +1056,7 @@ def test():
     assert len(new_packet.header.current_fs) == FS_LENGTH
     assert len(new_packet.header.current_mac) == MAC_SIZE
     assert (len(new_packet.header.blinded_aheader) ==
-            compute_blinded_aheader_size())
+            compute_blinded_aheader_size(max_hops=max_hops))
     assert new_packet.get_first_hop() == bwd_path[2]
     previous_nonce = new_packet.header.nonce
     raw_packet = new_packet.pack()
@@ -1069,3 +1071,5 @@ def test():
 
 if __name__ == "__main__":
     test()
+    test(max_hops=5)
+    test(max_hops=9)

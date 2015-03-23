@@ -185,7 +185,6 @@ class SessionInfo(object):
         assert isinstance(incoming_mac, bytes)
         assert len(incoming_mac) == MAC_SIZE
         assert isinstance(incoming_blinded_aheader, bytes)
-        assert len(incoming_blinded_aheader) == compute_blinded_aheader_size()
         self.session_id = session_id
         self.forwarding_segment = incoming_forwarding_segment
         self.incoming_mac = incoming_mac
