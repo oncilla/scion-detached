@@ -25,7 +25,8 @@ from lib.privacy.sphinx.sphinx_end_host import SphinxEndHost,\
 import uuid
 from curve25519.keys import Private, Public
 from lib.privacy.session import SetupPathData, SessionRequestInfo,\
-    TransmissionPathData, SessionInfo, SourceSessionInfo, DestinationSessionInfo
+    TransmissionPathData, SessionInfo, SourceSessionInfo,\
+    DestinationSessionInfo
 from lib.privacy.hornet_packet import compute_fs_payload_size, SetupPacket,\
     HornetPacketType, SHARED_KEY_LENGTH, FS_LENGTH,\
     compute_blinded_aheader_size,\
@@ -235,7 +236,8 @@ class HornetSource(HornetEndHost, HornetNode):
                                    max_hops=self._sphinx_end_host.max_hops)
         return (session_id, setup_packet)
 
-    def construct_data_packet(self, session_id, packet_type, data):
+    def construct_data_packet(self, session_id, data,
+                              packet_type=HornetPacketType.DATA_FWD):
         """
         Construct a :class:`hornet_packet.DataPacket` to be sent belonging
         to the specified session.
@@ -248,6 +250,10 @@ class HornetSource(HornetEndHost, HornetNode):
             raise InvalidSession("session id " + str(session_id) +
                                  " does not correspond to any open session")
         session_info = self._open_sessions_by_session_id[session_id]
+        assert isinstance(session_info, SourceSessionInfo)
+        if session_info.expiration_time <= int(time.time()):
+            raise InvalidSession("session with id " + str(session_id) +
+                                 " has expired")
         # Set values for new header (deep copy is mainly to avoid issued with
         # concurrent execution of this method, changing these values
         # in the stored AnonymousHeader would not be a problem otherwise
@@ -502,10 +508,15 @@ class HornetSource(HornetEndHost, HornetNode):
 
         # Create data packet to deliver the backward header to the destination
         data_for_destination = bwd_path[0] + bwd_anonymous_header.pack()
-        next_packet = \
-            self.construct_data_packet(session_request_info.session_id,
-                                       HornetPacketType.DATA_FWD_SESSION,
-                                       data_for_destination)
+        try:
+            next_packet = \
+                self.construct_data_packet(session_request_info.session_id,
+                                           data_for_destination,
+                                           HornetPacketType.DATA_FWD_SESSION)
+        except InvalidSession:
+            return HornetProcessingResult(
+                        HornetProcessingResult.Type.SESSION_EXPIRED,
+                        session_id=session_request_info.session_id)
 
         return HornetProcessingResult(HornetProcessingResult.Type
                                       .SESSION_ESTABLISHED,
@@ -529,6 +540,37 @@ class HornetDestination(HornetEndHost, HornetNode):
         assert isinstance(secret_key, bytes)
         HornetEndHost.__init__(self)
         HornetNode.__init__(self, secret_key, private=private)
+
+    def construct_data_packet(self, session_id, data):
+        """
+        Construct a :class:`hornet_packet.DataPacket` to be sent belonging
+        to the specified session.
+        """
+        assert isinstance(session_id, int)
+        assert isinstance(data, bytes)
+        if session_id not in self._open_sessions_by_session_id:
+            raise InvalidSession("session id " + str(session_id) +
+                                 " does not correspond to any open session")
+        session_info = self._open_sessions_by_session_id[session_id]
+        assert isinstance(session_info, DestinationSessionInfo)
+        if session_info.expiration_time <= int(time.time()):
+            raise InvalidSession("session with id " + str(session_id) +
+                                 " has expired")
+        # Set values for new header (deep copy is mainly to avoid issued with
+        # concurrent execution of this method, changing these values
+        # in the stored AnonymousHeader would not be a problem otherwise
+        header = copy.deepcopy(session_info.backward_anonymous_header)
+        header.packet_type = HornetPacketType.DATA_BWD
+        new_nonce = os.urandom(NONCE_LENGTH)
+        header.nonce = new_nonce
+
+        # Encrypt the payload
+        stream_key = derive_data_payload_stream_key(session_info.shared_key)
+        payload = pad_to_length(data, DATA_PAYLOAD_LENGTH)
+        payload = stream_cipher_encrypt(stream_key, payload, new_nonce)
+
+        # Return the new data packet
+        return DataPacket(header, payload)
 
     def process_setup_packet(self, raw_packet):
         """
@@ -821,6 +863,8 @@ def test():
     result = destination.process_incoming_packet(raw_packet)
     assert (result.result_type ==
             HornetProcessingResult.Type.SESSION_ESTABLISHED)
+    dest_session_id = result.session_id
+    assert dest_session_id
 
 
 if __name__ == "__main__":
