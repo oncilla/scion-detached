@@ -31,6 +31,7 @@ import os
 from lib.crypto.prp import prp_encrypt, BLOCK_SIZE, prp_decrypt
 from curve25519.keys import Private, Public
 from lib.privacy.common.exception import PacketParsingException
+from lib.privacy.common.constants import DEFAULT_MAX_HOPS
 
 
 def compute_shared_keys(source_private, nodes_pubkeys):
@@ -261,7 +262,7 @@ class SphinxEndHost(SphinxNode):
         if not isinstance(packet, SphinxPacket):
             assert isinstance(packet, bytes)
             try:
-                packet = SphinxPacket.parse_bytes_to_packet(packet)
+                packet = SphinxPacket.parse_bytes_to_packet(packet, max_hops=self.max_hops)
             except PacketParsingException:
                 return ProcessingResult(ProcessingResult.Type.DROP)
         header = packet.header
@@ -296,7 +297,7 @@ def test():
     end_host.construct_reply_packet(b'5678', shared_keys[-1], header)
 
 
-def test_routing():
+def test_routing(max_hops=DEFAULT_MAX_HOPS):
     # Fake key for the source as the last node, used in replies. This
     # key may be always the same, but in any case it does not need to be
     # known to any other party
@@ -310,6 +311,11 @@ def test_routing():
     node_1 = SphinxNode(node_1_private)
     node_2 = SphinxNode(node_2_private)
     node_3 = SphinxNode(node_3_private) # Destination
+
+    source.max_hops = max_hops
+    node_1.max_hops = max_hops
+    node_2.max_hops = max_hops
+    node_3.max_hops = max_hops
 
     ## Forward packet ##
     nodes_privates = [node_1_private, node_2_private, node_3_private]
@@ -393,4 +399,6 @@ def test_routing():
 if __name__ == "__main__":
     test()
     test_routing()
+    test_routing(max_hops=5)
+    test_routing(max_hops=12)
 

@@ -181,7 +181,7 @@ class SphinxNode(object):
         if not isinstance(packet, SphinxPacket):
             assert isinstance(packet, bytes)
             try:
-                packet = SphinxPacket.parse_bytes_to_packet(packet)
+                packet = SphinxPacket.parse_bytes_to_packet(packet, max_hops=self.max_hops)
             except PacketParsingException:
                 return ProcessingResult(ProcessingResult.Type.DROP)
         header = packet.header
