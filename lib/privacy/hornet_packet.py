@@ -25,9 +25,10 @@ from lib.privacy.sphinx.packet import SphinxHeader, SphinxPacket
 from lib.privacy.common.exception import PacketParsingException
 from lib.privacy.common.constants import DEFAULT_MAX_HOPS, MAC_SIZE,\
     GROUP_ELEM_LENGTH, DEFAULT_ADDRESS_LENGTH
+from Crypto.Cipher import AES
 
 MAX_HOPS_LENGTH = 1 # Number of bytes needed for the max_hops field
-NONCE_LENGTH = 4 # Size of a nonce in bytes
+NONCE_LENGTH = AES.block_size # Size of a nonce in bytes
 # Length of the shared key between a source and a node
 SHARED_KEY_LENGTH = 16
 ROUTING_INFO_LENGTH = 16

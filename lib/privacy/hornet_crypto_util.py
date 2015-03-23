@@ -88,9 +88,27 @@ def derive_new_nonce(shared_key, received_nonce):
     """
     assert isinstance(shared_key, bytes)
     assert len(shared_key) == SHARED_KEY_LENGTH
-    hash_object = sha256(b"hornet-noncederivation-new-nonce:" + shared_key +
-                         received_nonce)
-    return hash_object.digest()[:NONCE_LENGTH]
+    assert len(received_nonce) == AES.block_size
+    block_cipher_key = sha256(b"hornet-keyderivation-new-nonce:" +
+                              shared_key).digest()
+    aes_instance = AES.new(block_cipher_key, mode=AES.MODE_ECB)
+    return aes_instance.encrypt(received_nonce)
+
+
+def derive_previous_nonce(shared_key, nonce):
+    """
+    Derive the previous nonce (used for the data payload onion-encryption/
+    decryption) from the nonce received by the node with which the key
+    shared_key is shared. This function is the inverse of
+    :func:`derive_new_nonce`.
+    """
+    assert isinstance(shared_key, bytes)
+    assert len(shared_key) == SHARED_KEY_LENGTH
+    assert len(nonce) == AES.block_size
+    block_cipher_key = sha256(b"hornet-keyderivation-new-nonce:" +
+                              shared_key).digest()
+    aes_instance = AES.new(block_cipher_key, mode=AES.MODE_ECB)
+    return aes_instance.decrypt(nonce)
 
 
 def generate_initial_fs_payload(shared_sphinx_key, fs_payload_length):
@@ -153,6 +171,11 @@ def test():
     assert len(fs_payload_1) == fs_payload_length
     assert fs_payload_1 == fs_payload_2
     assert isinstance(fs_payload_1, bytes)
+
+    nonce = b'5'*16
+    shared_key = b'8'*16
+    derived_nonce = derive_new_nonce(shared_key,nonce)
+    assert derive_previous_nonce(shared_key, derived_nonce) == nonce
 
     node_secret_key = b'2'*32
     fs_shared_key = b'3'*16
