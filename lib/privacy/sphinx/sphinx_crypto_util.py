@@ -34,6 +34,14 @@ _PAD_START_BYTE = b'\xFF'
 _PAD_BYTE = b'\x00'
 
 
+class PaddingFormatError(ValueError):
+    """
+    Error indicating that it was not possible to remove a padding from
+    a message because the provided message is not in the right format.
+    """
+    pass
+
+
 def pad_to_block_multiple(msg, block_size=BLOCK_SIZE):
     """
     Pad the input message to a multiple of the block size (as done in PKCS#7)
@@ -49,9 +57,11 @@ def remove_block_pad(padded_msg):
     PKCS#7).
     """
     assert isinstance(padded_msg, bytes)
-    padded_msg = padded_msg.rstrip(b'\0')
-    assert len(padded_msg) > 0
+    if padded_msg[-1:] == b'\0':
+        raise PaddingFormatError("message is not padded as expected")
     pad_length = int.from_bytes(padded_msg[-1:], byteorder='little')
+    if pad_length > len(padded_msg):
+        raise PaddingFormatError("message is not padded as expected")
     return padded_msg[:-pad_length]
 
 
@@ -69,7 +79,10 @@ def remove_length_pad(msg):
     """
     Remove length padding added with :func:`pad_to_length`.
     """
-    return msg.rstrip(_PAD_BYTE)[0:-1]
+    msg_without_pad_bytes = msg.rstrip(_PAD_BYTE)
+    if msg_without_pad_bytes[-1:] != _PAD_START_BYTE:
+        raise PaddingFormatError("message is not padded as expected")
+    return msg_without_pad_bytes[:-1]
 
 
 def derive_mac_key(shared_key):

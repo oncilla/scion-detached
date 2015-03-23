@@ -45,7 +45,7 @@ from lib.privacy.common.constants import LOCALHOST_ADDRESS,\
 import itertools
 from lib.privacy.sphinx.sphinx_crypto_util import stream_cipher_encrypt,\
     verify_mac, stream_cipher_decrypt, compute_mac, pad_to_length,\
-    remove_length_pad
+    remove_length_pad, PaddingFormatError
 import copy
 
 
@@ -425,8 +425,11 @@ class HornetSource(HornetEndHost, HornetNode):
                         session_id=session_request_info.session_id)
 
         # Get the forwarding segments for the forward path
-        fwd_fs_payload = self._sphinx_node.get_message_from_payload(
-                                        sphinx_processing_result.result)
+        try:
+            fwd_fs_payload = self._sphinx_node.get_message_from_payload(
+                                            sphinx_processing_result.result)
+        except PaddingFormatError:
+            return HornetProcessingResult(HornetProcessingResult.Type.INVALID)
         try:
             fwd_fses, fwd_tmp_pubkeys = self._retrieve_fses_and_pubkeys(
                 fwd_fs_payload,
@@ -548,8 +551,11 @@ class HornetDestination(HornetEndHost, HornetNode):
             return HornetProcessingResult(HornetProcessingResult.Type.INVALID)
         if not sphinx_processing_result.is_at_destination():
             return HornetProcessingResult(HornetProcessingResult.Type.INVALID)
-        payload = self._sphinx_node.get_message_from_payload(
+        try:
+            payload = self._sphinx_node.get_message_from_payload(
                                         sphinx_processing_result.result)
+        except PaddingFormatError:
+            return HornetProcessingResult(HornetProcessingResult.Type.INVALID)
         first_hop = payload[:DEFAULT_ADDRESS_LENGTH]
         raw_header = payload[DEFAULT_ADDRESS_LENGTH:]
         bwd_sphinx_header = SphinxHeader.parse_bytes_to_header(raw_header)

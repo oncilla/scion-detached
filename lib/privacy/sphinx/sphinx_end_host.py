@@ -26,7 +26,7 @@ from lib.privacy.sphinx.packet import compute_blinded_header_size,\
 from lib.privacy.sphinx.sphinx_crypto_util import stream_cipher_decrypt,\
     derive_stream_key, derive_mac_key, stream_cipher_encrypt, compute_mac,\
     derive_prp_key, pad_to_length, pad_to_block_multiple,\
-    compute_blinding_private, verify_mac
+    compute_blinding_private, verify_mac, PaddingFormatError
 import os
 from lib.crypto.prp import prp_encrypt, BLOCK_SIZE, prp_decrypt
 from curve25519.keys import Private, Public
@@ -340,7 +340,11 @@ def test_routing():
     # Node 3 - Destination
     result = node_3.get_packet_processing_result(raw_packet)
     assert result.is_at_destination()
-    assert node_3.get_message_from_payload(result.result) == message
+    try:
+        received_message = node_3.get_message_from_payload(result.result)
+    except PaddingFormatError:
+        assert False, "received message with incorrect padding"
+    assert received_message == message
 
     ## Reply packet ##
     # Remove previous last hop (destination), reverse the order of the nodes
@@ -380,7 +384,11 @@ def test_routing():
     # Source
     result = source.process_incoming_reply(raw_packet)
     assert result.is_at_destination()
-    assert source.get_message_from_payload(result.result) == message
+    try:
+        received_message = source.get_message_from_payload(result.result)
+    except PaddingFormatError:
+        assert False, "received message with incorrect padding"
+    assert received_message == message
 
 if __name__ == "__main__":
     test()
