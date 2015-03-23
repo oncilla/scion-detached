@@ -35,7 +35,7 @@ from lib.privacy.hornet_packet import compute_fs_payload_size, SetupPacket,\
 from lib.privacy.hornet_crypto_util import generate_initial_fs_payload,\
     derive_fs_payload_stream_key, derive_fs_payload_mac_key,\
     derive_aheader_stream_key, derive_aheader_mac_key, derive_new_nonce,\
-    derive_data_payload_stream_key
+    derive_data_payload_stream_key, derive_previous_nonce
 import os
 import time
 from lib.privacy.hornet_processing import HornetProcessingResult
@@ -532,6 +532,61 @@ class HornetSource(HornetEndHost, HornetNode):
                                       session_request_info.session_id,
                                       packet_to_send=next_packet)
 
+    def process_data_packet(self, raw_packet):
+        """
+        Process an incoming Hornet data packet
+        (:class:`hornet_packet.DataPacket`), and return an instance of class
+        :class:`hornet_processing.HornetProcessingResult`.
+        """
+        try:
+            packet = DataPacket.parse_bytes_to_packet(raw_packet)
+        except PacketParsingException:
+            return HornetProcessingResult(HornetProcessingResult.Type.INVALID)
+
+        forwarding_segment = packet.header.current_fs
+        mac = packet.header.current_mac
+        blinded_header = packet.header.blinded_aheader
+        if forwarding_segment not in self._open_sessions_by_fs:
+            return HornetProcessingResult(HornetProcessingResult.
+                                          Type.INVALID)
+        session_info = self._open_sessions_by_fs[forwarding_segment]
+        assert isinstance(session_info, SourceSessionInfo)
+        if session_info.expiration_time <= int(time.time()):
+            return HornetProcessingResult(
+                HornetProcessingResult.Type.SESSION_EXPIRED,
+                session_id=session_info.session_id)
+        if (session_info.incoming_mac != mac or
+                session_info.incoming_blinded_aheader != blinded_header):
+            return HornetProcessingResult(HornetProcessingResult.
+                                          Type.INVALID)
+
+        # Construct the onion-encrypted payload
+        # The shared keys are those of the nodes that encrypted the payload,
+        # from first to last, i.e. from the destination to the node closest
+        # to the destination. The last key in
+        # session_info.backward_path_data.shared_keys is the key the source
+        # "shared with itself", so it is discarded since the source has
+        # obviously not encrypted the payload.
+        destination_shared_key = session_info.forward_path_data.shared_keys[-1]
+        shared_keys = [destination_shared_key]
+        shared_keys.extend(session_info.backward_path_data.shared_keys[:-1])
+        nonce = packet.header.nonce
+        payload = packet.payload
+        for shared_key in reversed(shared_keys):
+            stream_key = derive_data_payload_stream_key(shared_key)
+            payload = stream_cipher_decrypt(stream_key, payload, nonce)
+            nonce = derive_previous_nonce(shared_key, nonce)
+        try:
+            data = remove_length_pad(payload)
+        except PaddingFormatError:
+            return HornetProcessingResult(HornetProcessingResult.
+                                          Type.INVALID)
+
+        return HornetProcessingResult(HornetProcessingResult.Type.
+                                      RECEIVED_DATA,
+                                      session_id=session_info.session_id,
+                                      received_data=data)
+
 
 class HornetDestination(HornetEndHost, HornetNode):
     """
@@ -689,7 +744,11 @@ class HornetDestination(HornetEndHost, HornetNode):
             nonce = derive_new_nonce(shared_key, packet.header.nonce)
             payload = stream_cipher_decrypt(payload_stream_key, packet.payload,
                                             nonce)
-            payload = remove_length_pad(payload)
+            try:
+                payload = remove_length_pad(payload)
+            except PaddingFormatError:
+                return HornetProcessingResult(HornetProcessingResult.
+                                              Type.INVALID)
             if len(payload) < DEFAULT_ADDRESS_LENGTH:
                 return HornetProcessingResult(HornetProcessingResult.
                                               Type.INVALID)
@@ -723,6 +782,7 @@ class HornetDestination(HornetEndHost, HornetNode):
                 return HornetProcessingResult(HornetProcessingResult.
                                               Type.INVALID)
             session_info = self._open_sessions_by_fs[forwarding_segment]
+            assert isinstance(session_info, DestinationSessionInfo)
             if session_info.expiration_time <= int(time.time()):
                 return HornetProcessingResult(
                     HornetProcessingResult.Type.SESSION_EXPIRED,
@@ -738,7 +798,11 @@ class HornetDestination(HornetEndHost, HornetNode):
             nonce = derive_new_nonce(shared_key, packet.header.nonce)
             payload = stream_cipher_decrypt(payload_stream_key, packet.payload,
                                             nonce)
-            data = remove_length_pad(payload)
+            try:
+                data = remove_length_pad(payload)
+            except PaddingFormatError:
+                return HornetProcessingResult(HornetProcessingResult.
+                                              Type.INVALID)
 
             return HornetProcessingResult(HornetProcessingResult.Type.
                                           RECEIVED_DATA,
@@ -908,7 +972,7 @@ def test():
     dest_session_id = result.session_id
     assert dest_session_id
 
-    # Source send data to destination
+    # Source sends data to destination
     fwd_data = b'Data message for the destination'
     data_packet = source.construct_data_packet(source_session_id, fwd_data)
     assert data_packet.get_first_hop() == fwd_path[0]
@@ -954,6 +1018,53 @@ def test():
             HornetProcessingResult.Type.RECEIVED_DATA)
     assert result.session_id == dest_session_id
     assert result.received_data == fwd_data
+
+    # Destination sends data to the source
+    bwd_data = b'Data message for the source'
+    data_packet = destination.construct_data_packet(dest_session_id, bwd_data)
+    assert data_packet.get_first_hop() == bwd_path[0]
+    raw_packet = data_packet.pack()
+
+    # Node 2 data packet processing
+    result = node_2.process_incoming_packet(raw_packet)
+    assert result.result_type == HornetProcessingResult.Type.FORWARD
+    new_packet = result.packet_to_send
+    assert new_packet is not None
+    assert new_packet.get_type() == HornetPacketType.DATA_BWD
+    assert len(new_packet.header.nonce) == NONCE_LENGTH
+    assert new_packet.header.nonce != b'\0'*16
+    assert new_packet.header.nonce != previous_nonce
+    assert len(new_packet.header.current_fs) == FS_LENGTH
+    assert len(new_packet.header.current_mac) == MAC_SIZE
+    assert (len(new_packet.header.blinded_aheader) ==
+            compute_blinded_aheader_size())
+    assert new_packet.get_first_hop() == bwd_path[1]
+    previous_nonce = new_packet.header.nonce
+    raw_packet = new_packet.pack()
+
+    # Node 1 data packet processing
+    result = node_1.process_incoming_packet(raw_packet)
+    assert result.result_type == HornetProcessingResult.Type.FORWARD
+    new_packet = result.packet_to_send
+    assert new_packet is not None
+    assert new_packet.get_type() == HornetPacketType.DATA_BWD
+    assert len(new_packet.header.nonce) == NONCE_LENGTH
+    assert new_packet.header.nonce != b'\0'*16
+    assert new_packet.header.nonce != previous_nonce
+    assert len(new_packet.header.current_fs) == FS_LENGTH
+    assert len(new_packet.header.current_mac) == MAC_SIZE
+    assert (len(new_packet.header.blinded_aheader) ==
+            compute_blinded_aheader_size())
+    assert new_packet.get_first_hop() == bwd_path[2]
+    previous_nonce = new_packet.header.nonce
+    raw_packet = new_packet.pack()
+
+    # Source data packet processing
+    result = source.process_incoming_packet(raw_packet)
+    assert (result.result_type ==
+            HornetProcessingResult.Type.RECEIVED_DATA)
+    assert result.session_id == source_session_id
+    assert result.received_data == bwd_data
 
 
 if __name__ == "__main__":
