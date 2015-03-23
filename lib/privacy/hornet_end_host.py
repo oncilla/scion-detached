@@ -309,7 +309,11 @@ class HornetSource(HornetEndHost, HornetNode):
         """
         Construct the fundamental part of an anonymous header
         (:class:`hornet_packet.AnonymousHeader`), which consists in the
-        following triple: (first_fs, first_mac, blinded_aheader).
+        following triple: (first_fs, first_mac, blinded_aheader), and return
+        these values together with the last hop mac and blinded header
+        (necessary for the source to do a fast verification of incoming data
+        packets. The output is the following tuple:
+        (first_fs, first_mac, blinded_aheader, last_mac, last_blinded_header)
         """
         assert len(shared_keys) == len(forwarding_segments)
         for shared_key in shared_keys:
@@ -335,11 +339,11 @@ class HornetSource(HornetEndHost, HornetNode):
         # Compute the anonymous header at each hop, starting by the last,
         # performing the reverse process of the anonymous header decryption
         # that will be done by the nodes
-        blinded_aheader = (os.urandom(blinded_aheader_size - filler_length) +
-                          filler)
-        fs = forwarding_segments[-1]
-        mac = compute_mac(mac_keys[-1], fs + blinded_aheader)
-        a_header = fs + mac + blinded_aheader
+        last_blinded_aheader = (os.urandom(blinded_aheader_size -
+                                           filler_length) + filler)
+        last_fs = forwarding_segments[-1]
+        last_mac = compute_mac(mac_keys[-1], last_fs + last_blinded_aheader)
+        a_header = last_fs + last_mac + last_blinded_aheader
         for fs, stream_key, mac_key in zip(reversed(forwarding_segments[:-1]),
                                            reversed(stream_keys[:-1]),
                                            reversed(mac_keys[:-1])):
@@ -349,7 +353,7 @@ class HornetSource(HornetEndHost, HornetNode):
             assert padded_blinded_aheader[-pad_size:] == b'\0'*pad_size
             mac = compute_mac(mac_key, fs + blinded_aheader)
             a_header = fs + mac + blinded_aheader
-        return (fs, mac, blinded_aheader)
+        return (fs, mac, blinded_aheader, last_mac, last_blinded_aheader)
 
     @staticmethod
     def _retrieve_fses_and_pubkeys(fs_payload, shared_sphinx_keys,
@@ -479,7 +483,7 @@ class HornetSource(HornetEndHost, HornetNode):
         bwd_shared_keys.append(source_shared_key)
 
         # Compute forward anonymous header and transmission path data
-        (fs, mac, blinded_aheader) = \
+        (fs, mac, blinded_aheader, _, _) = \
             self._construct_basic_anonymous_header(fwd_shared_keys, fwd_fses)
         fwd_path = session_request_info.forward_path_data.path
         fwd_anonymous_header = AnonymousHeader(
@@ -490,7 +494,7 @@ class HornetSource(HornetEndHost, HornetNode):
         fwd_path_data = TransmissionPathData(fwd_anonymous_header,
                                              fwd_shared_keys, fwd_path)
         # Compute backward anonymous header and transmission path data
-        (fs, mac, blinded_aheader) = \
+        (fs, mac, blinded_aheader, incoming_mac, incoming_blinded_aheader) = \
             self._construct_basic_anonymous_header(bwd_shared_keys, bwd_fses)
         bwd_path = session_request_info.backward_path_data.path
         bwd_anonymous_header = AnonymousHeader(
@@ -505,7 +509,8 @@ class HornetSource(HornetEndHost, HornetNode):
         #FIXME:Daniele: Add protection against concurrent access
         session_info = SourceSessionInfo(session_request_info.session_id,
                                          fwd_path_data, bwd_path_data,
-                                         source_dummy_fs)
+                                         source_dummy_fs, incoming_mac,
+                                         incoming_blinded_aheader)
         self.add_session_info(session_info)
         self.remove_session_request_info(session_id=
                                          session_request_info.session_id)

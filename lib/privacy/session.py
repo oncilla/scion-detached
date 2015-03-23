@@ -156,6 +156,18 @@ class SessionInfo(object):
         part of the forward :class:`hornet_packet.AnonymousHeader` that allows
         the end host to match an incoming data packet to an open session.
     :vartype incoming_forwarding_segment: bytes
+    :ivar incoming_mac: mac of the incoming packet, used together with the
+        incoming_forwarding_segment and the incoming_blinded_header to quickly
+        verify the integrity of the header of an incoming data packet by simply
+        checking for the equality of the values to those verified at the
+        receipt of the first data packet (when the session is created).
+    :vartype incoming_mac: bytes
+    :ivar incoming_blinded_header: blinded_header of the incoming packet, used
+        together with the incoming_forwarding_segment and the incoming_mac to
+        quickly verify the integrity of the header of an incoming data packet
+        by simply checking for the equality of the values to those verified at
+        the receipt of the first data packet (when the session is created).
+    :vartype incoming_blinded_header: bytes
     :ivar time_created: timestamp indicating the time when the session was
         established
     :vartype time_created: int
@@ -164,12 +176,20 @@ class SessionInfo(object):
     :vartype expiration_time: int
     """
 
-    def __init__(self, session_id, incoming_forwarding_segment, expiration_time):
+    def __init__(self, session_id, incoming_forwarding_segment, incoming_mac,
+                 incoming_blinded_aheader, expiration_time):
         assert isinstance(session_id, int)
         assert isinstance(expiration_time, int)
         assert isinstance(incoming_forwarding_segment, bytes)
+        assert len(incoming_forwarding_segment) == FS_LENGTH
+        assert isinstance(incoming_mac, bytes)
+        assert len(incoming_mac) == MAC_SIZE
+        assert isinstance(incoming_blinded_aheader, bytes)
+        assert len(incoming_blinded_aheader) == compute_blinded_aheader_size()
         self.session_id = session_id
         self.forwarding_segment = incoming_forwarding_segment
+        self.incoming_mac = incoming_mac
+        self.incoming_blinded_aheader = incoming_blinded_aheader
         self.time_created = int(time.time())
         self.expiration_time = expiration_time
 
@@ -187,6 +207,18 @@ class SourceSessionInfo(SessionInfo):
         part of the backward :class:`hornet_packet.AnonymousHeader` that allows
         the source to match an incoming data packet to an open session.
     :vartype incoming_forwarding_segment: bytes
+    :ivar incoming_mac: mac of the incoming packet, used together with the
+        incoming_forwarding_segment and the incoming_blinded_header to quickly
+        verify the integrity of the header of an incoming data packet by simply
+        checking for the equality of the values to those verified at the
+        receipt of the first data packet (when the session is created).
+    :vartype incoming_mac: bytes
+    :ivar incoming_blinded_header: blinded_header of the incoming packet, used
+        together with the incoming_forwarding_segment and the incoming_mac to
+        quickly verify the integrity of the header of an incoming data packet
+        by simply checking for the equality of the values to those verified at
+        the receipt of the first data packet (when the session is created).
+    :vartype incoming_blinded_header: bytes
     :ivar time_created: timestamp indicating the time when the session was
         established
     :vartype time_created: int
@@ -196,7 +228,8 @@ class SourceSessionInfo(SessionInfo):
     """
 
     def __init__(self, session_id, forward_path_data, backward_path_data,
-                 incoming_forwarding_segment, valid_for_seconds=None):
+                 incoming_forwarding_segment, incoming_mac,
+                 incoming_blinded_aheader, valid_for_seconds=None):
         assert isinstance(forward_path_data, TransmissionPathData)
         assert isinstance(backward_path_data, TransmissionPathData)
         assert isinstance(incoming_forwarding_segment, bytes)
@@ -208,6 +241,7 @@ class SourceSessionInfo(SessionInfo):
         else:
             valid_for_seconds = DEFAULT_SESSION_DURATION_SEC
         SessionInfo.__init__(self, session_id, incoming_forwarding_segment,
+                             incoming_mac, incoming_blinded_aheader,
                              int(time.time()) + valid_for_seconds)
         self.forward_path_data = forward_path_data
         self.backward_path_data = backward_path_data
@@ -249,19 +283,14 @@ class DestinationSessionInfo(SessionInfo):
     """
 
     def __init__(self, session_id, shared_key, incoming_forwarding_segment,
-                 incoming_mac, incoming_blinded_aheader, backward_anonymous_header,
-                 expiration_time):
+                 incoming_mac, incoming_blinded_aheader,
+                 backward_anonymous_header, expiration_time):
         assert isinstance(shared_key, bytes)
         assert len(shared_key) == SHARED_KEY_LENGTH
-        assert isinstance(incoming_mac, bytes)
-        assert len(incoming_mac) == MAC_SIZE
-        assert isinstance(incoming_blinded_aheader, bytes)
-        assert len(incoming_blinded_aheader) == compute_blinded_aheader_size()
         assert isinstance(backward_anonymous_header, AnonymousHeader)
         SessionInfo.__init__(self, session_id, incoming_forwarding_segment,
+                             incoming_mac, incoming_blinded_aheader,
                              expiration_time)
-        self.incoming_mac = incoming_mac
-        self.incoming_blinded_aheader = incoming_blinded_aheader
         self.shared_key = shared_key
         self.backward_anonymous_header = backward_anonymous_header
 
