@@ -21,24 +21,57 @@ limitations under the License.
 import cProfile
 # import os
 import pstats
+import time
 
-from lib.privacy.hornet_end_host import test
+import lib.crypto.prp as prp
+import lib.privacy.hornet_end_host as hornet
+
+REPEAT_TIMES = 50
 
 # PROFILING_OUTPUT_DIR = "profiling/"
 # if not os.path.exists(PROFILING_OUTPUT_DIR):
 #     os.makedirs(PROFILING_OUTPUT_DIR)
 # output_file = os.path.join(PROFILING_OUTPUT_DIR, "hornet_end_host_profiling")
 
+def print_heading(heading):
+    """Print heading"""
+    print("#####  " + str(heading) + "  #####\n")
+    print(time.strftime('%Y-%m-%d %H:%M:%S') + "\n")
+
+
 def profile_whole_run():
     """
     Profile the entire protocol run, including the setup and a forward and
     a backward data message.
     """
+    print_heading("Profiling entire Hornet protocol")
     profiler = cProfile.Profile()
-    profiler.run("test()")
+
+    profiler.enable()
+    for _ in range(REPEAT_TIMES):
+        hornet.test()
+    profiler.disable()
+
+    profiling_stats = pstats.Stats(profiler)
+    profiling_stats.sort_stats('cumulative').print_stats()
+
+
+def profile_prp():
+    """
+    Profile a PRP encryption and decryption.
+    """
+    print_heading("Profiling PRP")
+    profiler = cProfile.Profile()
+
+    profiler.enable()
+    for _ in range(REPEAT_TIMES):
+        prp.test()
+    profiler.disable()
+
     profiling_stats = pstats.Stats(profiler)
     profiling_stats.strip_dirs().sort_stats('cumulative').print_stats()
 
 
 if __name__ == '__main__':
     profile_whole_run()
+    profile_prp()
