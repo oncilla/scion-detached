@@ -818,31 +818,33 @@ class HornetDestination(HornetEndHost, HornetNode):
 
 
 
-def test(max_hops=DEFAULT_MAX_HOPS):
+def test(number_of_hops=5, max_hops=DEFAULT_MAX_HOPS):
+    assert number_of_hops <= max_hops
+    number_of_intermediate_nodes = number_of_hops - 1
+
     # Source
     source_private = Private(secret=b'S'*32)
-    source_secret_key = b's'*32
-    source = HornetSource(source_secret_key, source_private, max_hops=max_hops)
+    source = HornetSource(os.urandom(32), source_private, max_hops=max_hops)
 
     # Nodes
-    node_1_private = Private(secret=b'A'*32)
-    node_2_private = Private(secret=b'B'*32)
-    node_1_secret_key = b'1'*32
-    node_2_secret_key = b'2'*32
-    node_1 = HornetNode(node_1_secret_key, node_1_private, max_hops=max_hops)
-    node_2 = HornetNode(node_2_secret_key, node_2_private, max_hops=max_hops)
+    path = []
+    nodes = []
+    for _ in range(number_of_intermediate_nodes):
+        private = Private(secret=os.urandom(32))
+        nodes.append(HornetNode(os.urandom(32), private, max_hops=max_hops))
+        path.append(os.urandom(DEFAULT_ADDRESS_LENGTH))
+    node_pubkeys = [node.private.get_public() for node in nodes]
 
     # Destination
     dest_private = Private(secret=b'D'*32)
-    dest_secret_key = b'd'*32
-    destination = HornetDestination(dest_secret_key, dest_private, max_hops=max_hops)
+    destination = HornetDestination(os.urandom(32), dest_private,
+                                    max_hops=max_hops)
 
     # Source session request
-    fwd_path = [b'1'*16, b'2'*16, b'dest_address0000']
-    bwd_path = [b'2'*16, b'1'*16, b'source_address00']
-    fwd_pubkeys = [node_1_private.get_public(), node_2_private.get_public(),
-                    destination.public]
-    bwd_pubkeys = [fwd_pubkeys[1], fwd_pubkeys[0], source.public]
+    fwd_path = path + [b'dest_address0000']
+    bwd_path = path[::-1] + [b'source_address00']
+    fwd_pubkeys = node_pubkeys + [destination.public]
+    bwd_pubkeys = node_pubkeys[::-1] + [source.public]
     session_expiration_time = int(time.time()) + 600
     sid, packet = source.create_new_session_request(fwd_path, fwd_pubkeys,
                                                     bwd_path, bwd_pubkeys,
@@ -851,31 +853,20 @@ def test(max_hops=DEFAULT_MAX_HOPS):
     assert packet.get_first_hop() == fwd_path[0]
     raw_packet = packet.pack()
 
-    # Node 1 setup packet processing
-    result = node_1.process_incoming_packet(raw_packet)
-    assert result.result_type == HornetProcessingResult.Type.FORWARD
-    new_packet = result.packet_to_send
-    assert new_packet is not None
-    assert new_packet.get_type() == HornetPacketType.SETUP_FWD
-    #assert new_packet.max_hops == max_hops
-    assert new_packet.expiration_time == session_expiration_time
-    assert isinstance(new_packet.sphinx_packet, SphinxPacket)
-    assert len(new_packet.fs_payload) == compute_fs_payload_size(max_hops=max_hops)
-    assert new_packet.get_first_hop() == fwd_path[1]
-    raw_packet = new_packet.pack()
-
-    # Node 2 setup packet processing
-    result = node_2.process_incoming_packet(raw_packet)
-    assert result.result_type == HornetProcessingResult.Type.FORWARD
-    new_packet = result.packet_to_send
-    assert new_packet is not None
-    assert new_packet.get_type() == HornetPacketType.SETUP_FWD
-    #assert new_packet.max_hops == max_hops
-    assert new_packet.expiration_time == session_expiration_time
-    assert isinstance(new_packet.sphinx_packet, SphinxPacket)
-    assert len(new_packet.fs_payload) == compute_fs_payload_size(max_hops=max_hops)
-    assert new_packet.get_first_hop() == fwd_path[2]
-    raw_packet = new_packet.pack()
+    # Nodes setup packet processing
+    for i, node in enumerate(nodes):
+        result = node.process_incoming_packet(raw_packet)
+        assert result.result_type == HornetProcessingResult.Type.FORWARD
+        new_packet = result.packet_to_send
+        assert new_packet is not None
+        assert new_packet.get_type() == HornetPacketType.SETUP_FWD
+        #assert new_packet.max_hops == max_hops
+        assert new_packet.expiration_time == session_expiration_time
+        assert isinstance(new_packet.sphinx_packet, SphinxPacket)
+        assert (len(new_packet.fs_payload) ==
+                compute_fs_payload_size(max_hops=max_hops))
+        assert new_packet.get_first_hop() == fwd_path[i+1]
+        raw_packet = new_packet.pack()
 
     # Destination setup packet processing
     result = destination.process_incoming_packet(raw_packet)
@@ -886,35 +877,25 @@ def test(max_hops=DEFAULT_MAX_HOPS):
     #assert new_packet.max_hops == max_hops
     assert new_packet.expiration_time == session_expiration_time
     assert isinstance(new_packet.sphinx_packet, SphinxPacket)
-    assert len(new_packet.fs_payload) == compute_fs_payload_size(max_hops=max_hops)
+    assert (len(new_packet.fs_payload) ==
+            compute_fs_payload_size(max_hops=max_hops))
     assert new_packet.get_first_hop() == bwd_path[0]
     raw_packet = new_packet.pack()
 
-    # Node 2 setup packet processing
-    result = node_2.process_incoming_packet(raw_packet)
-    assert result.result_type == HornetProcessingResult.Type.FORWARD
-    new_packet = result.packet_to_send
-    assert new_packet is not None
-    assert new_packet.get_type() == HornetPacketType.SETUP_BWD
-    #assert new_packet.max_hops == max_hops
-    assert new_packet.expiration_time == session_expiration_time
-    assert isinstance(new_packet.sphinx_packet, SphinxPacket)
-    assert len(new_packet.fs_payload) == compute_fs_payload_size(max_hops=max_hops)
-    assert new_packet.get_first_hop() == bwd_path[1]
-    raw_packet = new_packet.pack()
-
-    # Node 1 setup packet processing
-    result = node_1.process_incoming_packet(raw_packet)
-    assert result.result_type == HornetProcessingResult.Type.FORWARD
-    new_packet = result.packet_to_send
-    assert new_packet is not None
-    assert new_packet.get_type() == HornetPacketType.SETUP_BWD
-    #assert new_packet.max_hops == max_hops
-    assert new_packet.expiration_time == session_expiration_time
-    assert isinstance(new_packet.sphinx_packet, SphinxPacket)
-    assert len(new_packet.fs_payload) == compute_fs_payload_size(max_hops=max_hops)
-    assert new_packet.get_first_hop() == bwd_path[2]
-    raw_packet = new_packet.pack()
+    # Nodes setup packet processing
+    for i, node in enumerate(reversed(nodes)):
+        result = node.process_incoming_packet(raw_packet)
+        assert result.result_type == HornetProcessingResult.Type.FORWARD
+        new_packet = result.packet_to_send
+        assert new_packet is not None
+        assert new_packet.get_type() == HornetPacketType.SETUP_BWD
+        #assert new_packet.max_hops == max_hops
+        assert new_packet.expiration_time == session_expiration_time
+        assert isinstance(new_packet.sphinx_packet, SphinxPacket)
+        assert (len(new_packet.fs_payload) ==
+                compute_fs_payload_size(max_hops=max_hops))
+        assert new_packet.get_first_hop() == bwd_path[i+1]
+        raw_packet = new_packet.pack()
 
     # Source processing of the second setup packet
     result = source.process_incoming_packet(raw_packet)
@@ -935,39 +916,23 @@ def test(max_hops=DEFAULT_MAX_HOPS):
     previous_nonce = new_packet.header.nonce
     raw_packet = new_packet.pack()
 
-    # Node 1 data packet processing
-    result = node_1.process_incoming_packet(raw_packet)
-    assert result.result_type == HornetProcessingResult.Type.FORWARD
-    new_packet = result.packet_to_send
-    assert new_packet is not None
-    assert new_packet.get_type() == HornetPacketType.DATA_FWD_SESSION
-    assert len(new_packet.header.nonce) == NONCE_LENGTH
-    assert new_packet.header.nonce != b'\0'*16
-    assert new_packet.header.nonce != previous_nonce
-    assert len(new_packet.header.current_fs) == FS_LENGTH
-    assert len(new_packet.header.current_mac) == MAC_SIZE
-    assert (len(new_packet.header.blinded_aheader) ==
-            compute_blinded_aheader_size(max_hops=max_hops))
-    assert new_packet.get_first_hop() == fwd_path[1]
-    previous_nonce = new_packet.header.nonce
-    raw_packet = new_packet.pack()
-
-    # Node 2 data packet processing
-    result = node_2.process_incoming_packet(raw_packet)
-    assert result.result_type == HornetProcessingResult.Type.FORWARD
-    new_packet = result.packet_to_send
-    assert new_packet is not None
-    assert new_packet.get_type() == HornetPacketType.DATA_FWD_SESSION
-    assert len(new_packet.header.nonce) == NONCE_LENGTH
-    assert new_packet.header.nonce != b'\0'*16
-    assert new_packet.header.nonce != previous_nonce
-    assert len(new_packet.header.current_fs) == FS_LENGTH
-    assert len(new_packet.header.current_mac) == MAC_SIZE
-    assert (len(new_packet.header.blinded_aheader) ==
-            compute_blinded_aheader_size(max_hops=max_hops))
-    assert new_packet.get_first_hop() == fwd_path[2]
-    previous_nonce = new_packet.header.nonce
-    raw_packet = new_packet.pack()
+    # Nodes data packet processing
+    for i, node in enumerate(nodes):
+        result = node.process_incoming_packet(raw_packet)
+        assert result.result_type == HornetProcessingResult.Type.FORWARD
+        new_packet = result.packet_to_send
+        assert new_packet is not None
+        assert new_packet.get_type() == HornetPacketType.DATA_FWD_SESSION
+        assert len(new_packet.header.nonce) == NONCE_LENGTH
+        assert new_packet.header.nonce != b'\0'*16
+        assert new_packet.header.nonce != previous_nonce
+        assert len(new_packet.header.current_fs) == FS_LENGTH
+        assert len(new_packet.header.current_mac) == MAC_SIZE
+        assert (len(new_packet.header.blinded_aheader) ==
+                compute_blinded_aheader_size(max_hops=max_hops))
+        assert new_packet.get_first_hop() == fwd_path[i+1]
+        previous_nonce = new_packet.header.nonce
+        raw_packet = new_packet.pack()
 
     # Destination data packet processing
     result = destination.process_incoming_packet(raw_packet)
@@ -982,39 +947,23 @@ def test(max_hops=DEFAULT_MAX_HOPS):
     assert data_packet.get_first_hop() == fwd_path[0]
     raw_packet = data_packet.pack()
 
-    # Node 1 data packet processing
-    result = node_1.process_incoming_packet(raw_packet)
-    assert result.result_type == HornetProcessingResult.Type.FORWARD
-    new_packet = result.packet_to_send
-    assert new_packet is not None
-    assert new_packet.get_type() == HornetPacketType.DATA_FWD
-    assert len(new_packet.header.nonce) == NONCE_LENGTH
-    assert new_packet.header.nonce != b'\0'*16
-    assert new_packet.header.nonce != previous_nonce
-    assert len(new_packet.header.current_fs) == FS_LENGTH
-    assert len(new_packet.header.current_mac) == MAC_SIZE
-    assert (len(new_packet.header.blinded_aheader) ==
-            compute_blinded_aheader_size(max_hops=max_hops))
-    assert new_packet.get_first_hop() == fwd_path[1]
-    previous_nonce = new_packet.header.nonce
-    raw_packet = new_packet.pack()
-
-    # Node 2 data packet processing
-    result = node_2.process_incoming_packet(raw_packet)
-    assert result.result_type == HornetProcessingResult.Type.FORWARD
-    new_packet = result.packet_to_send
-    assert new_packet is not None
-    assert new_packet.get_type() == HornetPacketType.DATA_FWD
-    assert len(new_packet.header.nonce) == NONCE_LENGTH
-    assert new_packet.header.nonce != b'\0'*16
-    assert new_packet.header.nonce != previous_nonce
-    assert len(new_packet.header.current_fs) == FS_LENGTH
-    assert len(new_packet.header.current_mac) == MAC_SIZE
-    assert (len(new_packet.header.blinded_aheader) ==
-            compute_blinded_aheader_size(max_hops=max_hops))
-    assert new_packet.get_first_hop() == fwd_path[2]
-    previous_nonce = new_packet.header.nonce
-    raw_packet = new_packet.pack()
+    # Nodes data packet processing
+    for i, node in enumerate(nodes):
+        result = node.process_incoming_packet(raw_packet)
+        assert result.result_type == HornetProcessingResult.Type.FORWARD
+        new_packet = result.packet_to_send
+        assert new_packet is not None
+        assert new_packet.get_type() == HornetPacketType.DATA_FWD
+        assert len(new_packet.header.nonce) == NONCE_LENGTH
+        assert new_packet.header.nonce != b'\0'*16
+        assert new_packet.header.nonce != previous_nonce
+        assert len(new_packet.header.current_fs) == FS_LENGTH
+        assert len(new_packet.header.current_mac) == MAC_SIZE
+        assert (len(new_packet.header.blinded_aheader) ==
+                compute_blinded_aheader_size(max_hops=max_hops))
+        assert new_packet.get_first_hop() == fwd_path[i+1]
+        previous_nonce = new_packet.header.nonce
+        raw_packet = new_packet.pack()
 
     # Destination data packet processing
     result = destination.process_incoming_packet(raw_packet)
@@ -1029,39 +978,23 @@ def test(max_hops=DEFAULT_MAX_HOPS):
     assert data_packet.get_first_hop() == bwd_path[0]
     raw_packet = data_packet.pack()
 
-    # Node 2 data packet processing
-    result = node_2.process_incoming_packet(raw_packet)
-    assert result.result_type == HornetProcessingResult.Type.FORWARD
-    new_packet = result.packet_to_send
-    assert new_packet is not None
-    assert new_packet.get_type() == HornetPacketType.DATA_BWD
-    assert len(new_packet.header.nonce) == NONCE_LENGTH
-    assert new_packet.header.nonce != b'\0'*16
-    assert new_packet.header.nonce != previous_nonce
-    assert len(new_packet.header.current_fs) == FS_LENGTH
-    assert len(new_packet.header.current_mac) == MAC_SIZE
-    assert (len(new_packet.header.blinded_aheader) ==
-            compute_blinded_aheader_size(max_hops=max_hops))
-    assert new_packet.get_first_hop() == bwd_path[1]
-    previous_nonce = new_packet.header.nonce
-    raw_packet = new_packet.pack()
-
-    # Node 1 data packet processing
-    result = node_1.process_incoming_packet(raw_packet)
-    assert result.result_type == HornetProcessingResult.Type.FORWARD
-    new_packet = result.packet_to_send
-    assert new_packet is not None
-    assert new_packet.get_type() == HornetPacketType.DATA_BWD
-    assert len(new_packet.header.nonce) == NONCE_LENGTH
-    assert new_packet.header.nonce != b'\0'*16
-    assert new_packet.header.nonce != previous_nonce
-    assert len(new_packet.header.current_fs) == FS_LENGTH
-    assert len(new_packet.header.current_mac) == MAC_SIZE
-    assert (len(new_packet.header.blinded_aheader) ==
-            compute_blinded_aheader_size(max_hops=max_hops))
-    assert new_packet.get_first_hop() == bwd_path[2]
-    previous_nonce = new_packet.header.nonce
-    raw_packet = new_packet.pack()
+    # Nodes data packet processing
+    for i, node in enumerate(reversed(nodes)):
+        result = node.process_incoming_packet(raw_packet)
+        assert result.result_type == HornetProcessingResult.Type.FORWARD
+        new_packet = result.packet_to_send
+        assert new_packet is not None
+        assert new_packet.get_type() == HornetPacketType.DATA_BWD
+        assert len(new_packet.header.nonce) == NONCE_LENGTH
+        assert new_packet.header.nonce != b'\0'*16
+        assert new_packet.header.nonce != previous_nonce
+        assert len(new_packet.header.current_fs) == FS_LENGTH
+        assert len(new_packet.header.current_mac) == MAC_SIZE
+        assert (len(new_packet.header.blinded_aheader) ==
+                compute_blinded_aheader_size(max_hops=max_hops))
+        assert new_packet.get_first_hop() == bwd_path[i+1]
+        previous_nonce = new_packet.header.nonce
+        raw_packet = new_packet.pack()
 
     # Source data packet processing
     result = source.process_incoming_packet(raw_packet)
@@ -1073,5 +1006,5 @@ def test(max_hops=DEFAULT_MAX_HOPS):
 
 if __name__ == "__main__":
     test()
-    test(max_hops=5)
-    test(max_hops=9)
+    test(number_of_hops=3, max_hops=5)
+    test(number_of_hops=7, max_hops=9)
