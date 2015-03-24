@@ -46,11 +46,16 @@ def _xor(bytes_1, bytes_2, bytes_3=None):
     Xor together two or three byte sequences bitwise.
     """
     assert len(bytes_1) == len(bytes_2)
+    length = len(bytes_1)
+    bytes_1_int = int.from_bytes(bytes_1, "big")
+    bytes_2_int = int.from_bytes(bytes_2, "big")
     if bytes_3 is not None:
-        return bytes([b1 ^ b2 ^ b3
-                      for b1, b2, b3 in zip(bytes_1, bytes_2, bytes_3)])
+        assert len(bytes_3) == length
+        bytes_3_int = int.from_bytes(bytes_3, "big")
+        return (bytes_1_int ^ bytes_2_int ^
+                bytes_3_int).to_bytes(length, "big")
     else:
-        return bytes([b1 ^ b2 for b1, b2 in zip(bytes_1, bytes_2)])
+        return (bytes_1_int ^ bytes_2_int).to_bytes(length, "big")
 
 
 def encrypt_with_aes_pcbc(key, msg, iv=ZEROED_IV):
@@ -62,14 +67,12 @@ def encrypt_with_aes_pcbc(key, msg, iv=ZEROED_IV):
     assert len(msg) % BLOCK_SIZE == 0
     aes = AES.new(key, mode=AES.MODE_ECB)
 
-    nth_block = lambda m, i: m[BLOCK_SIZE * i:BLOCK_SIZE * (i+1)]
-    last_block = lambda c: c[-BLOCK_SIZE:]
-
-    ciphertext = aes.encrypt(_xor(nth_block(msg, 0), iv))
+    ciphertext = aes.encrypt(_xor(msg[:BLOCK_SIZE], iv))
     for i in range(1,len(msg) // BLOCK_SIZE):
-        hashed_past = sha1(nth_block(msg, i-1)
-                           + last_block(ciphertext)).digest()[:16]
-        ciphertext += aes.encrypt(_xor(nth_block(msg, i), hashed_past))
+        hashed_past = sha1(msg[BLOCK_SIZE * (i-1):BLOCK_SIZE * i]
+                           + ciphertext[-BLOCK_SIZE:]).digest()[:16]
+        ciphertext += aes.encrypt(_xor(msg[BLOCK_SIZE * i:BLOCK_SIZE * (i+1)],
+                                  hashed_past))
     return ciphertext
 
 
@@ -82,14 +85,13 @@ def decrypt_with_aes_pcbc(key, ciphertext, iv=ZEROED_IV):
     assert len(ciphertext) % BLOCK_SIZE == 0
     aes = AES.new(key, mode=AES.MODE_ECB)
 
-    nth_block = lambda m, i: m[BLOCK_SIZE * i:BLOCK_SIZE * (i+1)]
-    last_block = lambda c: c[-BLOCK_SIZE:]
-
-    msg = _xor(aes.decrypt(nth_block(ciphertext, 0)), iv)
+    msg = _xor(aes.decrypt(ciphertext[:BLOCK_SIZE]), iv)
     for i in range(1,len(ciphertext) // BLOCK_SIZE):
-        hashed_past = sha1(last_block(msg)
-                           + nth_block(ciphertext, i-1)).digest()[:16]
-        msg += _xor(aes.decrypt(nth_block(ciphertext, i)), hashed_past)
+        hashed_past = sha1(msg[-BLOCK_SIZE:]
+                           + ciphertext[BLOCK_SIZE * (i-1):
+                                        BLOCK_SIZE * i]).digest()[:16]
+        msg += _xor(aes.decrypt(ciphertext[BLOCK_SIZE * i:BLOCK_SIZE * (i+1)]),
+                    hashed_past)
     return msg
 
 
@@ -123,7 +125,7 @@ def prp_decrypt(prp_key, ciphertext):
     return decrypt_with_aes_pcbc(prp_key, intermediate_ciphertext)
 
 
-def main():
+def test():
     key = b'4' * 32
     msg = b'1234123412341234' * 40
     ciphertext = prp_encrypt(key, msg)
@@ -135,5 +137,5 @@ def main():
     assert plaintext == msg
 
 if __name__ == "__main__":
-    main()
+    test()
 
