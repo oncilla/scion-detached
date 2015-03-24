@@ -18,47 +18,53 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
+import statistics
 import timeit
-from lib.privacy.common.constants import DEFAULT_MAX_HOPS
+from lib.privacy.common.constants import DEFAULT_MAX_HOPS,\
+    DEFAULT_ADDRESS_LENGTH
 
-setup_statement = """
+SETUP_STMT = """
 from lib.privacy.common.constants import DEFAULT_MAX_HOPS
 from curve25519.keys import Private
 from lib.privacy.hornet_end_host import HornetSource, HornetDestination
 from lib.privacy.hornet_node import HornetNode
+import os
 import time
 
-max_hops=DEFAULT_MAX_HOPS
+DEFAULT_ADDRESS_LENGTH={2}
+
+number_of_hops={0}
+max_hops={1}
+
+number_of_intermediate_nodes = number_of_hops - 1
 
 # Source
 source_private = Private(secret=b'S'*32)
-source_secret_key = b's'*32
-source = HornetSource(source_secret_key, source_private, max_hops=max_hops)
+source = HornetSource(os.urandom(32), source_private, max_hops=max_hops)
 
 # Nodes
-node_1_private = Private(secret=b'A'*32)
-node_2_private = Private(secret=b'B'*32)
-node_1_secret_key = b'1'*32
-node_2_secret_key = b'2'*32
-node_1 = HornetNode(node_1_secret_key, node_1_private, max_hops=max_hops)
-node_2 = HornetNode(node_2_secret_key, node_2_private, max_hops=max_hops)
+path = []
+nodes = []
+for _ in range(number_of_intermediate_nodes):
+    private = Private(secret=os.urandom(32))
+    nodes.append(HornetNode(os.urandom(32), private, max_hops=max_hops))
+    path.append(os.urandom(DEFAULT_ADDRESS_LENGTH))
+node_pubkeys = [node.private.get_public() for node in nodes]
 
 # Destination
 dest_private = Private(secret=b'D'*32)
-dest_secret_key = b'd'*32
-destination = HornetDestination(dest_secret_key, dest_private,
+destination = HornetDestination(os.urandom(32), dest_private,
                                 max_hops=max_hops)
 
 # Source session request
-fwd_path = [b'1'*16, b'2'*16, b'dest_address0000']
-bwd_path = [b'2'*16, b'1'*16, b'source_address00']
-fwd_pubkeys = [node_1_private.get_public(), node_2_private.get_public(),
-                destination.public]
-bwd_pubkeys = [fwd_pubkeys[1], fwd_pubkeys[0], source.public]
+fwd_path = path + [b'dest_address0000']
+bwd_path = path[::-1] + [b'source_address00']
+fwd_pubkeys = node_pubkeys + [destination.public]
+bwd_pubkeys = node_pubkeys[::-1] + [source.public]
 session_expiration_time = int(time.time()) + 600
 """
 
-create_session_statement = """
+CREATE_SESSION_STMT = """
 _, packet = source.create_new_session_request(fwd_path, fwd_pubkeys,
                                               bwd_path, bwd_pubkeys,
                                               session_expiration_time)
@@ -66,14 +72,27 @@ packet.pack()
 """
 
 
-def time_setup(repeat=1000):
+def get_setup_stmt(number_of_hops=5, max_hops=DEFAULT_MAX_HOPS):
+    assert number_of_hops <= max_hops
+    return SETUP_STMT.format(number_of_hops, max_hops, DEFAULT_ADDRESS_LENGTH)
+
+
+def time_setup(repetitions=3, samples_per_repetition=1000, number_of_hops=5,
+               max_hops=DEFAULT_MAX_HOPS):
     """
     Measure the time required for a Hornet setup
     """
-    timer = timeit.Timer(create_session_statement, setup=setup_statement)
-    measured_time = timer.timeit(repeat)/1000
-    print(str(measured_time))
+    timer = timeit.Timer(CREATE_SESSION_STMT,
+                         setup=get_setup_stmt(number_of_hops, max_hops))
+    experiments = []
+    for _ in range(repetitions):
+        samples = timer.repeat(repeat=samples_per_repetition, number=1)
+        experiments.append(samples)
+    #TODO:Daniele: store experiments
+    means = list(map(statistics.mean, experiments))
+    stdevs = list(map(statistics.stdev, experiments))
+    print("Mean: {}\tStandard Dev.: {}".format(means, stdevs))
 
 if __name__ == '__main__':
-    time_setup()
+    time_setup(repetitions=3, samples_per_repetition=100)
 
