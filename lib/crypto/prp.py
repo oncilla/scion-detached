@@ -35,27 +35,25 @@ limitations under the License.
 """
 from Crypto.Cipher import AES
 from _sha1 import sha1
-
+from _sha256 import sha256
+from Crypto.Util import Counter
+# pylint: disable=no-name-in-module
+try:
+    from Crypto.Util.strxor import strxor
+except ImportError:
+    from Crypto.Hash.HMAC import _strxor as strxor
+# pylint: enable=no-name-in-module
 
 BLOCK_SIZE = AES.block_size
 ZEROED_IV = b'\x00' * BLOCK_SIZE
 
 
-def _xor(bytes_1, bytes_2, bytes_3=None):
+def _xor(bytes_1, bytes_2):
     """
     Xor together two or three byte sequences bitwise.
     """
     assert len(bytes_1) == len(bytes_2)
-    length = len(bytes_1)
-    bytes_1_int = int.from_bytes(bytes_1, "big")
-    bytes_2_int = int.from_bytes(bytes_2, "big")
-    if bytes_3 is not None:
-        assert len(bytes_3) == length
-        bytes_3_int = int.from_bytes(bytes_3, "big")
-        return (bytes_1_int ^ bytes_2_int ^
-                bytes_3_int).to_bytes(length, "big")
-    else:
-        return (bytes_1_int ^ bytes_2_int).to_bytes(length, "big")
+    return strxor(bytes_1, bytes_2)
 
 
 def encrypt_with_aes_pcbc(key, msg, iv=ZEROED_IV):
@@ -94,6 +92,56 @@ def decrypt_with_aes_pcbc(key, ciphertext, iv=ZEROED_IV):
                     hashed_past)
     return msg
 
+# pylint: disable=invalid-name
+
+def lioness_enc(key, message):
+    k = len(key)
+    assert len(message) >= k * 2
+    # Round 1
+    r1 = _xor(sha256(message[k:]+key+b'1').digest()[:k],
+            message[:k]) + message[k:]
+
+    # Round 2
+    k2 = _xor(r1[:k], key)
+    c = AES.new(k2, AES.MODE_CTR, counter=Counter.new(128))
+    r2 = r1[:k] + c.encrypt(r1[k:])
+
+    # Round 3
+    r3 = _xor(sha256(r2[k:]+key+b'3').digest()[:k], r2[:k]) + r2[k:]
+
+    # Round 4
+    k4 = _xor(r3[:k], key)
+    c = AES.new(k4, AES.MODE_CTR, counter=Counter.new(128))
+    r4 = r3[:k] + c.encrypt(r3[k:])
+
+    return r4
+
+def lioness_dec(key, message):
+    k = len(key)
+    assert len(message) >= k * 2
+
+    r4 = message
+
+    # Round 4
+    k4 = _xor(r4[:k], key)
+    c = AES.new(k4, AES.MODE_CTR, counter=Counter.new(128))
+    r3 = r4[:k] + c.encrypt(r4[k:])
+
+    # Round 3
+    r2 = _xor(sha256(r3[k:]+key+b'3').digest()[:k], r3[:k]) + r3[k:]
+
+    # Round 2
+    k2 = _xor(r2[:k], key)
+    c = AES.new(k2, AES.MODE_CTR, counter=Counter.new(128))
+    r1 = r2[:k] + c.encrypt(r2[k:])
+
+    # Round 1
+    r0 = _xor(sha256(r1[k:]+key+b'1').digest()[:k], r1[:k]) + r1[k:]
+
+    return r0
+
+# pylint: enable=invalid-name
+
 
 def prp_encrypt(prp_key, msg):
     """
@@ -105,9 +153,10 @@ def prp_encrypt(prp_key, msg):
     assert isinstance(prp_key, bytes)
     assert isinstance(msg, bytes)
     assert len(msg) % BLOCK_SIZE == 0
-    intermediate_ciphertext = bytes(
-        reversed(encrypt_with_aes_pcbc(prp_key, msg)))
-    return encrypt_with_aes_pcbc(prp_key, intermediate_ciphertext)
+#     intermediate_ciphertext = bytes(
+#         reversed(encrypt_with_aes_pcbc(prp_key, msg)))
+#     return encrypt_with_aes_pcbc(prp_key, intermediate_ciphertext)
+    return lioness_enc(prp_key, msg)
 
 
 def prp_decrypt(prp_key, ciphertext):
@@ -120,9 +169,10 @@ def prp_decrypt(prp_key, ciphertext):
     assert isinstance(prp_key, bytes)
     assert isinstance(ciphertext, bytes)
     assert len(ciphertext) % BLOCK_SIZE == 0
-    intermediate_ciphertext = bytes(
-        reversed(decrypt_with_aes_pcbc(prp_key, ciphertext)))
-    return decrypt_with_aes_pcbc(prp_key, intermediate_ciphertext)
+#     intermediate_ciphertext = bytes(
+#         reversed(decrypt_with_aes_pcbc(prp_key, ciphertext)))
+#     return decrypt_with_aes_pcbc(prp_key, intermediate_ciphertext)
+    return lioness_dec(prp_key, ciphertext)
 
 
 def test():
