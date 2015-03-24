@@ -24,8 +24,9 @@ from lib.privacy.hornet_packet import get_packet_type, HornetPacketType,\
     TIMESTAMP_LENGTH, SHARED_KEY_LENGTH, ROUTING_INFO_LENGTH, FS_LENGTH,\
     SetupPacket, MAC_SIZE, DataPacket, AnonymousHeader
 from lib.privacy.hornet_crypto_util import fs_shared_key_encrypt,\
-    fs_shared_key_decrypt, generate_fs_encdec_iv, derive_fs_payload_stream_key,\
-    derive_fs_payload_mac_key, derive_aheader_mac_key, derive_aheader_stream_key,\
+    fs_shared_key_decrypt, generate_fs_encdec_iv,\
+    derive_fs_payload_stream_key, derive_fs_payload_mac_key,\
+    derive_aheader_mac_key, derive_aheader_stream_key,\
     derive_new_nonce, derive_data_payload_stream_key
 from curve25519.keys import Private, Public
 import time

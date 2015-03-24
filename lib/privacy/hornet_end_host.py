@@ -306,7 +306,8 @@ class HornetSource(HornetEndHost, HornetNode):
             shared_keys.append(full_shared_key[:SHARED_KEY_LENGTH])
         return shared_keys
 
-    def _construct_basic_anonymous_header(self, shared_keys, forwarding_segments):
+    def _construct_basic_anonymous_header(self, shared_keys,
+                                          forwarding_segments):
         """
         Construct the fundamental part of an anonymous header
         (:class:`hornet_packet.AnonymousHeader`), which consists in the
@@ -321,7 +322,8 @@ class HornetSource(HornetEndHost, HornetNode):
             assert isinstance(shared_key, bytes)
             assert len(shared_key) == SHARED_KEY_LENGTH
         pad_size = FS_LENGTH + MAC_SIZE
-        blinded_aheader_size = compute_blinded_aheader_size(self._sphinx_end_host.max_hops)
+        blinded_aheader_size = \
+            compute_blinded_aheader_size(self._sphinx_end_host.max_hops)
         aheader_size = pad_size + blinded_aheader_size
         number_of_hops = len(shared_keys)
         stream_keys = [derive_aheader_stream_key(shared_key)
