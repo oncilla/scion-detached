@@ -22,8 +22,10 @@ import statistics
 import timeit
 from lib.privacy.common.constants import DEFAULT_MAX_HOPS,\
     DEFAULT_ADDRESS_LENGTH
+from lib.privacy.hornet_packet import DATA_PAYLOAD_LENGTH
+from test.privacy.profiling import print_heading
 
-SETUP_STMT = """
+_INIT_STMT = """
 from lib.privacy.common.constants import DEFAULT_MAX_HOPS
 from curve25519.keys import Private
 from lib.privacy.hornet_end_host import HornetSource, HornetDestination
@@ -64,35 +66,115 @@ bwd_pubkeys = node_pubkeys[::-1] + [source.public]
 session_expiration_time = int(time.time()) + 600
 """
 
-CREATE_SESSION_STMT = """
-_, packet = source.create_new_session_request(fwd_path, fwd_pubkeys,
-                                              bwd_path, bwd_pubkeys,
-                                              session_expiration_time)
-packet.pack()
+HORNET_SETUP_PHASE_STMT = """
+# Source creates first setup packet
+source_session_id, packet = source.create_new_session_request(
+    fwd_path, fwd_pubkeys, bwd_path, bwd_pubkeys, session_expiration_time)
+raw_packet = packet.pack()
+
+# Intermediate nodes process first setup packet
+for i, node in enumerate(nodes):
+    result = node.process_incoming_packet(raw_packet)
+    raw_packet = result.packet_to_send.pack()
+
+# Destination processes first setup packet and creates second setup packet
+result = destination.process_incoming_packet(raw_packet)
+raw_packet = result.packet_to_send.pack()
+
+# Intermediate nodes process second setup packet
+for i, node in enumerate(reversed(nodes)):
+    result = node.process_incoming_packet(raw_packet)
+    raw_packet = result.packet_to_send.pack()
+
+# Source processes second setup packet and creates third setup packet (data)
+result = source.process_incoming_packet(raw_packet)
+raw_packet = result.packet_to_send.pack()
+
+# Intermediate nodes process data packet
+for i, node in enumerate(nodes):
+    result = node.process_incoming_packet(raw_packet)
+    raw_packet = result.packet_to_send.pack()
+
+# Destination processes third setup packet (data) and stores session
+result = destination.process_incoming_packet(raw_packet)
+dest_session_id = result.session_id
 """
 
+HORNET_TRANSMIT_DATA_STMT = """
+data = b'1'*10
 
-def get_setup_stmt(number_of_hops=5, max_hops=DEFAULT_MAX_HOPS):
+# Source creates data packet
+data_packet = source.construct_data_packet(source_session_id, data)
+raw_packet = data_packet.pack()
+
+# Intermediate nodes process data packet
+for i, node in enumerate(nodes):
+    result = node.process_incoming_packet(raw_packet)
+    raw_packet = result.packet_to_send.pack()
+
+# Destination processes data packet and obtains data
+destination.process_incoming_packet(raw_packet)
+"""
+
+def get_init_stmt(number_of_hops=5, max_hops=DEFAULT_MAX_HOPS):
+    """
+    Returns the setup statement formatted correctly (inserting the parameters)
+    """
     assert number_of_hops <= max_hops
-    return SETUP_STMT.format(number_of_hops, max_hops, DEFAULT_ADDRESS_LENGTH)
+    return _INIT_STMT.format(number_of_hops, max_hops, DEFAULT_ADDRESS_LENGTH)
 
 
-def time_setup(repetitions=3, samples_per_repetition=1000, number_of_hops=5,
+def time_setup(replications=5, sample_size=1000, number_of_hops=5,
                max_hops=DEFAULT_MAX_HOPS):
     """
     Measure the time required for a Hornet setup
     """
-    timer = timeit.Timer(CREATE_SESSION_STMT,
-                         setup=get_setup_stmt(number_of_hops, max_hops))
-    experiments = []
-    for _ in range(repetitions):
-        samples = timer.repeat(repeat=samples_per_repetition, number=1)
-        experiments.append(samples)
+    timer = timeit.Timer(HORNET_SETUP_PHASE_STMT,
+                         setup=get_init_stmt(number_of_hops, max_hops))
+    # Warm up
+    _ = timer.timeit(number=500)
+
+    # Actual experiment
+    replicates = []
+    for _ in range(replications):
+        samples = timer.repeat(repeat=sample_size, number=1)
+        replicates.append(samples)
     #TODO:Daniele: store experiments
-    means = list(map(statistics.mean, experiments))
-    stdevs = list(map(statistics.stdev, experiments))
-    print("Mean: {}\tStandard Dev.: {}".format(means, stdevs))
+    means = [statistics.mean(r) for r in replicates]
+    stdevs = [statistics.stdev(r) for r in replicates]
+    print_heading("Setup")
+    print("Estimated mean: " + str(statistics.mean(means)))
+    print("Estimated stdev: " + str(statistics.mean(stdevs)))
+
+
+def time_data(number_of_packets, replications=5, sample_size=1000,
+              number_of_hops=5, max_hops=DEFAULT_MAX_HOPS):
+    """
+    Measure the time required for the transmission of number_of_packets
+    data packets.
+    """
+    setup_stmt = (get_init_stmt(number_of_hops, max_hops) +
+                  HORNET_SETUP_PHASE_STMT)
+    timer = timeit.Timer(HORNET_TRANSMIT_DATA_STMT,
+                         setup=setup_stmt)
+    # Warm up
+    _ = timer.timeit(number=500)
+
+    # Actual experiment
+    replicates = []
+    for _ in range(replications):
+        samples = timer.repeat(repeat=sample_size, number=number_of_packets)
+        replicates.append(samples)
+    #TODO:Daniele: store experiments
+    means = [statistics.mean(r) for r in replicates]
+    stdevs = [statistics.stdev(r) for r in replicates]
+    print_heading("Data transmission")
+    print("Estimated mean: " + str(statistics.mean(means)))
+    print("Estimated stdev: " + str(statistics.mean(stdevs)))
 
 if __name__ == '__main__':
-    time_setup(repetitions=3, samples_per_repetition=100)
+    time_setup(replications=5, sample_size=100)
+    bytes_to_transmit = 1000000 # 1MB
+    packets_to_transmit = bytes_to_transmit // (DATA_PAYLOAD_LENGTH-1)
+    time_data(packets_to_transmit, replications=3, sample_size=5)
 
