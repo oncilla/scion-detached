@@ -24,6 +24,6 @@ DEFAULT_MAX_HOPS = 8
 DEFAULT_ADDRESS_LENGTH = 16 # Default size of a node's address/name in bytes
 # Default size of a group element (for Diffie-Hellman) in bytes
 GROUP_ELEM_LENGTH = 32
-MAC_SIZE = 16 # Size of a Message Authentication Code in bytes
+MAC_SIZE = 8 # Size of a Message Authentication Code in bytes
 LOCALHOST_ADDRESS = b"0" * DEFAULT_ADDRESS_LENGTH
 
