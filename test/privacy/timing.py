@@ -25,9 +25,9 @@ import time
 import timeit
 from lib.privacy.common.constants import DEFAULT_MAX_HOPS,\
     DEFAULT_ADDRESS_LENGTH
-from lib.privacy.hornet_packet import DATA_PAYLOAD_LENGTH
 from test.privacy.profiling import print_heading
 import datetime
+from math import sqrt
 
 EXPERIMENT_OUTPUT_DIR = "results"
 
@@ -130,19 +130,22 @@ def get_init_stmt(number_of_hops=5, max_hops=DEFAULT_MAX_HOPS):
     return _INIT_STMT.format(number_of_hops, max_hops, DEFAULT_ADDRESS_LENGTH)
 
 
-def get_unique_filename(base_path, extension=''):
+def get_unique_filename(base_path, extension='', timestamp=None):
     """
     Returns a filename based on base_path by appending a timestamp, checking
     if it exists, and in case adding a sequence number to the end.
     """
     assert isinstance(base_path, str)
     assert isinstance(extension, str)
-    timestamp = time.strftime("%Y%m%d-%H%M%S")
-    if not os.path.exists(base_path + '_' + timestamp + extension):
-        return base_path + '_' + timestamp + extension
+    if timestamp is None:
+        timestr = time.strftime("%Y%m%d-%H%M%S")
+    else:
+        timestr = timestamp.strftime("%Y%m%d-%H%M%S")
+    if not os.path.exists(base_path + '_' + timestr + extension):
+        return base_path + '_' + timestr + extension
     counter = 1
     while True:
-        path = base_path + '_' + timestamp + '_' + str(counter) + extension
+        path = base_path + '_' + timestr + '_' + str(counter) + extension
         if not os.path.exists(path):
             return path
         counter += 1
@@ -156,13 +159,18 @@ class ExperimentData(object):
     def __init__(self, experiment_type, experiment_start, experiment_end,
                  replications, sample_size, repetitions_per_sample,
                  number_of_hops, max_hops, replicates):
+        assert replications > 0
+        assert sample_size > 1
+        assert len(replicates) == replications
+        for replicate in replicates:
+            assert len(replicate) == sample_size
         self.experiment_type = experiment_type
         self.experiment_start = experiment_start
         self.experiment_end = experiment_end
         self.replications = replications
+        self.sample_size = sample_size
         # Number of consecutive repetitions of the code within one sample
         self.repetitions_per_sample = repetitions_per_sample
-        self.sample_size = sample_size
         self.number_of_hops = number_of_hops
         self.max_hops = max_hops
         self.replicates = replicates
@@ -171,8 +179,11 @@ class ExperimentData(object):
         """
         Store the data of the experiment.
         """
-        base_path = EXPERIMENT_OUTPUT_DIR + base_filename
-        output_path = get_unique_filename(base_path, ".pickle")
+        if not os.path.exists(EXPERIMENT_OUTPUT_DIR):
+            os.makedirs(EXPERIMENT_OUTPUT_DIR)
+        base_path = os.path.join(EXPERIMENT_OUTPUT_DIR, base_filename)
+        output_path = get_unique_filename(base_path, extension=".pickle",
+                                          timestamp=self.experiment_start)
         with open(output_path, 'wb') as file:
             pickle.dump(self, file)
         return output_path
@@ -184,20 +195,40 @@ class ExperimentData(object):
         :func:`store_experiment_data`.
         """
         with open(experiment_path, 'rb') as file:
-            return pickle.load(file)
+            loaded_obj = pickle.load(file)
+        if isinstance(loaded_obj, ExperimentData):
+            return loaded_obj
+        else:
+            raise TypeError("The data loaded from the pickle file is not "
+                            "an instance of ExperimentData")
 
     def print_aggregated_data(self):
         """
         Prints the aggregated data from the experiment
         """
         means = [statistics.mean(r) for r in self.replicates]
-        stdevs = [statistics.stdev(r) for r in self.replicates]
+        variances = [statistics.variance(r) for r in self.replicates]
+        best_times = [min(r) for r in self.replicates]
+        mean = statistics.mean(means)
+        stdev = sqrt(statistics.mean(variances))
+        best_time = min(best_times)
 
         print_heading(self.experiment_type, print_time=False)
-        print("Experiment started at:    " + self.experiment_start)
-        print("Experiment completed at:  " + self.experiment_end)
-        print("Estimated mean: " + str(statistics.mean(means)))
-        print("Estimated stdev: " + str(statistics.mean(stdevs)))
+        print("Hops (Max): {}({})"
+              .format(self.number_of_hops, self.max_hops))
+        print()
+        print("Replications: " + str(self.replications))
+        print("Sample size:  " + str(self.sample_size))
+        print("Repetitions per sample: " + str(self.repetitions_per_sample))
+        print()
+        print("Experiment started at:    " +
+              str(self.experiment_start.isoformat()))
+        print("Experiment completed at:  " +
+              str(self.experiment_end.isoformat()))
+        print()
+        print("Estimated mean:  " + str(mean))
+        print("Best time (min): " + str(best_time))
+        print("Estimated stdev: " + str(stdev))
         print()
 
 
@@ -206,6 +237,8 @@ def time_setup(replications=5, sample_size=1000, number_of_hops=5,
     """
     Measure the time required for a Hornet setup
     """
+    assert replications > 0
+    assert sample_size > 1
     repetitions_per_sample = 1
     timer = timeit.Timer(HORNET_SETUP_PHASE_STMT,
                          setup=get_init_stmt(number_of_hops, max_hops))
@@ -214,12 +247,12 @@ def time_setup(replications=5, sample_size=1000, number_of_hops=5,
 
     # Actual experiment
     replicates = []
-    experiment_start = datetime.datetime.now().isoformat()
+    experiment_start = datetime.datetime.now()
     for _ in range(replications):
         samples = timer.repeat(repeat=sample_size,
                                number=repetitions_per_sample)
         replicates.append(samples)
-    experiment_end = datetime.datetime.now().isoformat()
+    experiment_end = datetime.datetime.now()
 
     data = ExperimentData("Setup timing", experiment_start,
                           experiment_end, replications, sample_size,
@@ -235,6 +268,8 @@ def time_data(number_of_packets, replications=5, sample_size=1000,
     Measure the time required for the transmission of number_of_packets
     data packets.
     """
+    assert replications > 0
+    assert sample_size > 1
     setup_stmt = (get_init_stmt(number_of_hops, max_hops) +
                   HORNET_SETUP_PHASE_STMT)
     timer = timeit.Timer(HORNET_TRANSMIT_DATA_STMT,
@@ -244,11 +279,11 @@ def time_data(number_of_packets, replications=5, sample_size=1000,
 
     # Actual experiment
     replicates = []
-    experiment_start = datetime.datetime.now().isoformat()
+    experiment_start = datetime.datetime.now()
     for _ in range(replications):
         samples = timer.repeat(repeat=sample_size, number=number_of_packets)
         replicates.append(samples)
-    experiment_end = datetime.datetime.now().isoformat()
+    experiment_end = datetime.datetime.now()
 
     experiment_name = ("Data transmission timing, {} packets"
                        .format(number_of_packets))
@@ -257,12 +292,13 @@ def time_data(number_of_packets, replications=5, sample_size=1000,
                           replications, sample_size,
                           number_of_packets,
                           number_of_hops, max_hops, replicates)
-    data.store(base_filename="data_timing_{}packets".format(number_of_packets))
+    data.store(base_filename="data_timing_{}_pkts".format(number_of_packets))
     data.print_aggregated_data()
 
 if __name__ == '__main__':
-    time_setup(replications=5, sample_size=100)
-    bytes_to_transmit = 1000000 # 1MB
-    packets_to_transmit = bytes_to_transmit // (DATA_PAYLOAD_LENGTH-1)
-    time_data(packets_to_transmit, replications=3, sample_size=5)
+    time_setup(replications=4, sample_size=100)
+    time_data(1, replications=4, sample_size=100)
+    # Retrieve data from file
+#     ExperimentData.retrieve_experiment_data(
+#         "results/setup_timing_20150325-123539.pickle").print_aggregated_data()
 
