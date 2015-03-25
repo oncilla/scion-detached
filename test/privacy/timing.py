@@ -28,6 +28,7 @@ from lib.privacy.common.constants import DEFAULT_MAX_HOPS,\
 from test.privacy.profiling import print_heading
 import datetime
 from math import sqrt
+import itertools
 
 EXPERIMENT_OUTPUT_DIR = "results"
 
@@ -296,8 +297,13 @@ def time_data(number_of_packets, replications=5, sample_size=1000,
     data.print_aggregated_data()
 
 if __name__ == '__main__':
-    time_setup(replications=4, sample_size=100)
-    time_data(1, replications=4, sample_size=100)
+    all_hops=[3, 4, 5, 6]
+    all_max_hops=[7, 10]
+    for number_of_hops, max_hops in itertools.product(all_hops, all_max_hops):
+        time_setup(replications=4, sample_size=100,
+                   number_of_hops=number_of_hops, max_hops=max_hops)
+        time_data(1, replications=4, sample_size=100,
+                   number_of_hops=number_of_hops, max_hops=max_hops)
     # Retrieve data from file
 #     ExperimentData.retrieve_experiment_data(
 #         "results/setup_timing_20150325-123539.pickle").print_aggregated_data()
