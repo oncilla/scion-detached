@@ -18,12 +18,18 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
+import os
+import pickle
 import statistics
+import time
 import timeit
 from lib.privacy.common.constants import DEFAULT_MAX_HOPS,\
     DEFAULT_ADDRESS_LENGTH
 from lib.privacy.hornet_packet import DATA_PAYLOAD_LENGTH
 from test.privacy.profiling import print_heading
+import datetime
+
+EXPERIMENT_OUTPUT_DIR = "results"
 
 _INIT_STMT = """
 from lib.privacy.common.constants import DEFAULT_MAX_HOPS
@@ -124,11 +130,83 @@ def get_init_stmt(number_of_hops=5, max_hops=DEFAULT_MAX_HOPS):
     return _INIT_STMT.format(number_of_hops, max_hops, DEFAULT_ADDRESS_LENGTH)
 
 
+def get_unique_filename(base_path, extension=''):
+    """
+    Returns a filename based on base_path by appending a timestamp, checking
+    if it exists, and in case adding a sequence number to the end.
+    """
+    assert isinstance(base_path, str)
+    assert isinstance(extension, str)
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    if not os.path.exists(base_path + '_' + timestamp + extension):
+        return base_path + '_' + timestamp + extension
+    counter = 1
+    while True:
+        path = base_path + '_' + timestamp + '_' + str(counter) + extension
+        if not os.path.exists(path):
+            return path
+        counter += 1
+
+
+class ExperimentData(object):
+    """
+    Data of an experiment (object to be serialized with JSON)
+    """
+
+    def __init__(self, experiment_type, experiment_start, experiment_end,
+                 replications, sample_size, repetitions_per_sample,
+                 number_of_hops, max_hops, replicates):
+        self.experiment_type = experiment_type
+        self.experiment_start = experiment_start
+        self.experiment_end = experiment_end
+        self.replications = replications
+        # Number of consecutive repetitions of the code within one sample
+        self.repetitions_per_sample = repetitions_per_sample
+        self.sample_size = sample_size
+        self.number_of_hops = number_of_hops
+        self.max_hops = max_hops
+        self.replicates = replicates
+
+    def store(self, base_filename="experiment_data"):
+        """
+        Store the data of the experiment.
+        """
+        base_path = EXPERIMENT_OUTPUT_DIR + base_filename
+        output_path = get_unique_filename(base_path, ".pickle")
+        with open(output_path, 'wb') as file:
+            pickle.dump(self, file)
+        return output_path
+
+    @staticmethod
+    def retrieve_experiment_data(experiment_path):
+        """
+        Retrieves the data of an experiment stored at experiment_path with
+        :func:`store_experiment_data`.
+        """
+        with open(experiment_path, 'rb') as file:
+            return pickle.load(file)
+
+    def print_aggregated_data(self):
+        """
+        Prints the aggregated data from the experiment
+        """
+        means = [statistics.mean(r) for r in self.replicates]
+        stdevs = [statistics.stdev(r) for r in self.replicates]
+
+        print_heading(self.experiment_type, print_time=False)
+        print("Experiment started at:    " + self.experiment_start)
+        print("Experiment completed at:  " + self.experiment_end)
+        print("Estimated mean: " + str(statistics.mean(means)))
+        print("Estimated stdev: " + str(statistics.mean(stdevs)))
+        print()
+
+
 def time_setup(replications=5, sample_size=1000, number_of_hops=5,
                max_hops=DEFAULT_MAX_HOPS):
     """
     Measure the time required for a Hornet setup
     """
+    repetitions_per_sample = 1
     timer = timeit.Timer(HORNET_SETUP_PHASE_STMT,
                          setup=get_init_stmt(number_of_hops, max_hops))
     # Warm up
@@ -136,15 +214,19 @@ def time_setup(replications=5, sample_size=1000, number_of_hops=5,
 
     # Actual experiment
     replicates = []
+    experiment_start = datetime.datetime.now().isoformat()
     for _ in range(replications):
-        samples = timer.repeat(repeat=sample_size, number=1)
+        samples = timer.repeat(repeat=sample_size,
+                               number=repetitions_per_sample)
         replicates.append(samples)
-    #TODO:Daniele: store experiments
-    means = [statistics.mean(r) for r in replicates]
-    stdevs = [statistics.stdev(r) for r in replicates]
-    print_heading("Setup")
-    print("Estimated mean: " + str(statistics.mean(means)))
-    print("Estimated stdev: " + str(statistics.mean(stdevs)))
+    experiment_end = datetime.datetime.now().isoformat()
+
+    data = ExperimentData("Setup timing", experiment_start,
+                          experiment_end, replications, sample_size,
+                          repetitions_per_sample,
+                          number_of_hops, max_hops, replicates)
+    data.store(base_filename="setup_timing")
+    data.print_aggregated_data()
 
 
 def time_data(number_of_packets, replications=5, sample_size=1000,
@@ -162,15 +244,21 @@ def time_data(number_of_packets, replications=5, sample_size=1000,
 
     # Actual experiment
     replicates = []
+    experiment_start = datetime.datetime.now().isoformat()
     for _ in range(replications):
         samples = timer.repeat(repeat=sample_size, number=number_of_packets)
         replicates.append(samples)
-    #TODO:Daniele: store experiments
-    means = [statistics.mean(r) for r in replicates]
-    stdevs = [statistics.stdev(r) for r in replicates]
-    print_heading("Data transmission")
-    print("Estimated mean: " + str(statistics.mean(means)))
-    print("Estimated stdev: " + str(statistics.mean(stdevs)))
+    experiment_end = datetime.datetime.now().isoformat()
+
+    experiment_name = ("Data transmission timing, {} packets"
+                       .format(number_of_packets))
+    data = ExperimentData(experiment_name,
+                          experiment_start, experiment_end,
+                          replications, sample_size,
+                          number_of_packets,
+                          number_of_hops, max_hops, replicates)
+    data.store(base_filename="data_timing_{}packets".format(number_of_packets))
+    data.print_aggregated_data()
 
 if __name__ == '__main__':
     time_setup(replications=5, sample_size=100)

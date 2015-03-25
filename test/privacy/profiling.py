@@ -36,10 +36,11 @@ REPEAT_TIMES = 20
 #     os.makedirs(PROFILING_OUTPUT_DIR)
 # output_file = os.path.join(PROFILING_OUTPUT_DIR, "hornet_end_host_profiling")
 
-def print_heading(heading):
+def print_heading(heading, print_time=True):
     """Print heading"""
     print("#####  " + str(heading) + "  #####\n")
-    print(time.strftime('%Y-%m-%d %H:%M:%S') + "\n")
+    if print_time:
+        print(time.strftime('%Y-%m-%d %H:%M:%S') + "\n")
 
 
 def profile_whole_protocol():
@@ -115,7 +116,7 @@ def profile_whole_protocol():
 
     profiling_stats = pstats.Stats(profiler)
     print_heading("Profiling Hornet setup")
-    profiling_stats.sort_stats('cumulative').print_stats()
+    profiling_stats.sort_stats('cumulative').print_stats(25)
 
     profiler = cProfile.Profile()
 
@@ -138,7 +139,7 @@ def profile_whole_protocol():
 
     profiling_stats = pstats.Stats(profiler)
     print_heading("Profiling Hornet data transmission")
-    profiling_stats.sort_stats('cumulative').print_stats()
+    profiling_stats.sort_stats('cumulative').print_stats(25)
 
 
 if __name__ == '__main__':
