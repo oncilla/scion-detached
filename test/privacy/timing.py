@@ -30,6 +30,8 @@ import datetime
 from math import sqrt
 import itertools
 
+DEFAULT_REPLICATIONS = 4
+DEFAULT_SAMPLE_SIZE = 100
 EXPERIMENT_OUTPUT_DIR = "results"
 
 _INIT_STMT = """
@@ -73,6 +75,13 @@ bwd_pubkeys = node_pubkeys[::-1] + [source.public]
 session_expiration_time = int(time.time()) + 600
 """
 
+SOURCE_NEW_SESSION = """
+_, packet = source.create_new_session_request(fwd_path, fwd_pubkeys, bwd_path,
+                                              bwd_pubkeys,
+                                              session_expiration_time)
+packet.pack()
+"""
+
 HORNET_SETUP_PHASE_STMT = """
 # Source creates first setup packet
 source_session_id, packet = source.create_new_session_request(
@@ -105,6 +114,16 @@ for i, node in enumerate(nodes):
 # Destination processes third setup packet (data) and stores session
 result = destination.process_incoming_packet(raw_packet)
 dest_session_id = result.session_id
+"""
+
+SOURCE_SEND_PACKET = """
+data = b'1'*10
+
+raw_packet = source.construct_data_packet(source_session_id, data).pack()
+"""
+
+NODE_PROCESS_DATA_STMT = """
+nodes[0].process_incoming_packet(raw_packet).packet_to_send.pack()
 """
 
 HORNET_TRANSMIT_DATA_STMT = """
@@ -227,24 +246,40 @@ class ExperimentData(object):
         print("Experiment completed at:  " +
               str(self.experiment_end.isoformat()))
         print()
-        print("Estimated mean:  " + str(mean))
-        print("Best time (min): " + str(best_time))
-        print("Estimated stdev: " + str(stdev))
+        print("Estimated mean:  {:.6f}".format(mean))
+        print("Best time (min): {:.6f}".format(best_time))
+        print("Estimated stdev: {:.6f}".format(stdev))
         print()
 
+    def print_compact(self):
+        """
+        Prints the aggregated data of the experiment in one line
+        """
+        means = [statistics.mean(r) for r in self.replicates]
+        variances = [statistics.variance(r) for r in self.replicates]
+        best_times = [min(r) for r in self.replicates]
+        mean = statistics.mean(means)
+        stdev = sqrt(statistics.mean(variances))
+        best_time = min(best_times)
 
-def time_setup(replications=5, sample_size=1000, number_of_hops=5,
-               max_hops=DEFAULT_MAX_HOPS):
+        print("{}\t{}({}):\t{:.6f}\t{:.6f}\t{:.6f}"
+              .format(self.experiment_type, self.number_of_hops,
+                      self.max_hops, mean, best_time, stdev))
+
+
+def time_statement(experiment_type, base_filename, stmt="pass",
+                   init_stmt="pass", replications=DEFAULT_REPLICATIONS,
+                   sample_size=DEFAULT_SAMPLE_SIZE, repetitions_per_sample = 1,
+                   number_of_hops=5, max_hops=DEFAULT_MAX_HOPS):
     """
-    Measure the time required for a Hornet setup
+    Measure the time required to execute statement stmt, store the result in a
+    :class:`ExperimentData` instance and return the path of the stored data.
     """
     assert replications > 0
     assert sample_size > 1
-    repetitions_per_sample = 1
-    timer = timeit.Timer(HORNET_SETUP_PHASE_STMT,
-                         setup=get_init_stmt(number_of_hops, max_hops))
+    timer = timeit.Timer(stmt, setup=init_stmt)
     # Warm up
-    _ = timer.timeit(number=500)
+    _ = timer.timeit(number=10)
 
     # Actual experiment
     replicates = []
@@ -255,56 +290,123 @@ def time_setup(replications=5, sample_size=1000, number_of_hops=5,
         replicates.append(samples)
     experiment_end = datetime.datetime.now()
 
-    data = ExperimentData("Setup timing", experiment_start,
+    data = ExperimentData(experiment_type, experiment_start,
                           experiment_end, replications, sample_size,
                           repetitions_per_sample,
                           number_of_hops, max_hops, replicates)
-    data.store(base_filename="setup_timing")
+    output_path = data.store(base_filename=base_filename)
     data.print_aggregated_data()
+    return output_path
 
 
-def time_data(number_of_packets, replications=5, sample_size=1000,
-              number_of_hops=5, max_hops=DEFAULT_MAX_HOPS):
+def time_setup(replications=DEFAULT_REPLICATIONS,
+               sample_size=DEFAULT_SAMPLE_SIZE, number_of_hops=5,
+               max_hops=DEFAULT_MAX_HOPS):
+    """
+    Measure the time required for a Hornet setup
+    """
+    output_path = time_statement("Complete setup", 'setup',
+                                 HORNET_SETUP_PHASE_STMT,
+                                 get_init_stmt(number_of_hops, max_hops),
+                                 replications, sample_size, 1, number_of_hops,
+                                 max_hops)
+    return output_path
+
+
+def time_source_new_session(replications=DEFAULT_REPLICATIONS,
+                            sample_size=DEFAULT_SAMPLE_SIZE, number_of_hops=5,
+                            max_hops=DEFAULT_MAX_HOPS):
+    """
+    Measure the time required for a source to create a session request
+    (first setup packet)
+    """
+    output_path = time_statement("Source sess req", 'source_sess_req',
+                                 SOURCE_NEW_SESSION,
+                                 get_init_stmt(number_of_hops, max_hops),
+                                 replications, sample_size, 1, number_of_hops,
+                                 max_hops)
+    return output_path
+
+
+def time_source_data_packet(replications=DEFAULT_REPLICATIONS,
+                            sample_size=DEFAULT_SAMPLE_SIZE, number_of_hops=5,
+                            max_hops=DEFAULT_MAX_HOPS):
+    """
+    Measure the time required for a source to create a data packet.
+    """
+    setup_stmt = (get_init_stmt(number_of_hops, max_hops) +
+                  HORNET_SETUP_PHASE_STMT)
+    output_path = time_statement("Source data pkt", 'source_data',
+                                 SOURCE_SEND_PACKET, setup_stmt,
+                                 replications, sample_size, 1, number_of_hops,
+                                 max_hops)
+    return output_path
+
+
+def time_node_data_packet(replications=DEFAULT_REPLICATIONS,
+                          sample_size=DEFAULT_SAMPLE_SIZE, number_of_hops=5,
+                          max_hops=DEFAULT_MAX_HOPS):
+    """
+    Measure the time required for a source to create a data packet.
+    """
+    setup_stmt = (get_init_stmt(number_of_hops, max_hops) +
+                  HORNET_SETUP_PHASE_STMT + SOURCE_SEND_PACKET)
+    output_path = time_statement("Node data pkt", 'node_data',
+                                 NODE_PROCESS_DATA_STMT, setup_stmt,
+                                 replications, sample_size, 1, number_of_hops,
+                                 max_hops)
+    return output_path
+
+
+def time_data(number_of_packets, replications=DEFAULT_REPLICATIONS,
+              sample_size=DEFAULT_SAMPLE_SIZE, number_of_hops=5,
+              max_hops=DEFAULT_MAX_HOPS):
     """
     Measure the time required for the transmission of number_of_packets
     data packets.
     """
-    assert replications > 0
-    assert sample_size > 1
     setup_stmt = (get_init_stmt(number_of_hops, max_hops) +
                   HORNET_SETUP_PHASE_STMT)
-    timer = timeit.Timer(HORNET_TRANSMIT_DATA_STMT,
-                         setup=setup_stmt)
-    # Warm up
-    _ = timer.timeit(number=500)
+    output_path = time_statement("Complete data", 'data', HORNET_TRANSMIT_DATA_STMT,
+                                 setup_stmt, replications, sample_size,
+                                 number_of_packets, number_of_hops, max_hops)
+    return output_path
 
-    # Actual experiment
-    replicates = []
-    experiment_start = datetime.datetime.now()
-    for _ in range(replications):
-        samples = timer.repeat(repeat=sample_size, number=number_of_packets)
-        replicates.append(samples)
-    experiment_end = datetime.datetime.now()
 
-    experiment_name = ("Data transmission timing, {} packets"
-                       .format(number_of_packets))
-    data = ExperimentData(experiment_name,
-                          experiment_start, experiment_end,
-                          replications, sample_size,
-                          number_of_packets,
-                          number_of_hops, max_hops, replicates)
-    data.store(base_filename="data_timing_{}_pkts".format(number_of_packets))
-    data.print_aggregated_data()
+def print_all_experiments(path_list):
+    """
+    Print all the experiments whose paths were passed as input list
+    """
+    for path in path_list:
+        data = ExperimentData.retrieve_experiment_data(path)
+        data.print_compact()
+
+
+def run_all_experiments():
+    """
+    Run all the experiments
+    """
+    all_hops = [3, 4, 5, 6]
+    all_max_hops = [7, 10]
+    experiments_paths = []
+
+    for number_of_hops, max_hops in itertools.product(all_hops, all_max_hops):
+        experiments_paths.append(time_setup(number_of_hops=number_of_hops,
+                                            max_hops=max_hops))
+        experiments_paths.append(time_source_new_session(
+            number_of_hops=number_of_hops, max_hops=max_hops))
+        experiments_paths.append(time_source_data_packet(
+            number_of_hops=number_of_hops, max_hops=max_hops))
+        experiments_paths.append(time_node_data_packet(
+            number_of_hops=number_of_hops, max_hops=max_hops))
+        experiments_paths.append(time_data(1, number_of_hops=number_of_hops,
+                                           max_hops=max_hops))
+    print_all_experiments(experiments_paths)
+
 
 if __name__ == '__main__':
-    all_hops=[3, 4, 5, 6]
-    all_max_hops=[7, 10]
-    for number_of_hops, max_hops in itertools.product(all_hops, all_max_hops):
-        time_setup(replications=4, sample_size=100,
-                   number_of_hops=number_of_hops, max_hops=max_hops)
-        time_data(1, replications=4, sample_size=100,
-                   number_of_hops=number_of_hops, max_hops=max_hops)
+    run_all_experiments()
     # Retrieve data from file
 #     ExperimentData.retrieve_experiment_data(
-#         "results/setup_timing_20150325-123539.pickle").print_aggregated_data()
+#         "results/setup_20150325-123539.pickle").print_aggregated_data()
 
