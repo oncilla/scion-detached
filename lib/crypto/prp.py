@@ -34,8 +34,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 from Crypto.Cipher import AES
-from _sha1 import sha1
-from _sha256 import sha256
+from hashlib import sha1
+from hashlib import sha256
 from Crypto.Util import Counter
 # pylint: disable=no-name-in-module
 try:
