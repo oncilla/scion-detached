@@ -82,10 +82,10 @@ def profile_whole_protocol():
     profiler.enable()
     for _ in range(REPEAT_TIMES):
         # Source creates first setup packet
-        source_session_id, packet = source.create_new_session_request(
+        source_session_id, source_packet = source.create_new_session_request(
             fwd_path, fwd_pubkeys, bwd_path, bwd_pubkeys,
             session_expiration_time)
-        raw_packet = packet.pack()
+        raw_packet = source_packet.pack()
 
         # Intermediate nodes process first setup packet
         for node in nodes:
@@ -120,6 +120,21 @@ def profile_whole_protocol():
 
     profiler = cProfile.Profile()
 
+    # Source packet
+    raw_packet = source_packet.pack()
+
+    profiler.enable()
+    for _ in range(REPEAT_TIMES):
+        # First node processes first setup packet
+        nodes[0].process_incoming_packet(raw_packet).packet_to_send.pack()
+    profiler.disable()
+
+    profiling_stats = pstats.Stats(profiler)
+    print_heading("Profiling Node setup packet processing")
+    profiling_stats.sort_stats('cumulative').print_stats(25)
+
+    profiler = cProfile.Profile()
+
     profiler.enable()
     for _ in range(REPEAT_TIMES):
         data = b'1'*10
@@ -140,6 +155,21 @@ def profile_whole_protocol():
     profiling_stats = pstats.Stats(profiler)
     print_heading("Profiling Hornet data transmission")
     profiling_stats.sort_stats('cumulative').print_stats(25)
+
+    profiler = cProfile.Profile()
+
+    # Source creates data packet
+    raw_packet = data_packet.pack()
+
+    profiler.enable()
+    for _ in range(100):
+        # First node processes data packet
+        nodes[0].process_incoming_packet(raw_packet).packet_to_send.pack()
+    profiler.disable()
+
+    profiling_stats = pstats.Stats(profiler)
+    print_heading("Profiling node data packet processing")
+    profiling_stats.sort_stats('cumulative').print_stats(30)
 
 
 if __name__ == '__main__':
