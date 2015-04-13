@@ -79,7 +79,56 @@ SOURCE_NEW_SESSION = """
 _, packet = source.create_new_session_request(fwd_path, fwd_pubkeys, bwd_path,
                                               bwd_pubkeys,
                                               session_expiration_time)
-packet.pack()
+raw_packet = packet.pack()
+"""
+
+NODE_PROCESS_PACKET_STMT = """
+nodes[0].process_incoming_packet(raw_packet).packet_to_send.pack()
+"""
+
+INIT_FOR_DEST_SETUP = """
+# Source creates first setup packet
+source_session_id, packet = source.create_new_session_request(
+    fwd_path, fwd_pubkeys, bwd_path, bwd_pubkeys, session_expiration_time)
+raw_packet = packet.pack()
+
+# Intermediate nodes process first setup packet
+for i, node in enumerate(nodes):
+    result = node.process_incoming_packet(raw_packet)
+    raw_packet = result.packet_to_send.pack()
+"""
+
+DEST_SETUP = """
+# Destination processes first setup packet and creates second setup packet
+result = destination.process_incoming_packet(raw_packet)
+raw_packet = result.packet_to_send.pack()
+"""
+
+INIT_FOR_SOURCE_2 = """
+# Source creates first setup packet
+source_session_id, packet = source.create_new_session_request(
+    fwd_path, fwd_pubkeys, bwd_path, bwd_pubkeys, session_expiration_time)
+raw_packet = packet.pack()
+
+# Intermediate nodes process first setup packet
+for i, node in enumerate(nodes):
+    result = node.process_incoming_packet(raw_packet)
+    raw_packet = result.packet_to_send.pack()
+
+# Destination processes first setup packet and creates second setup packet
+result = destination.process_incoming_packet(raw_packet)
+raw_packet = result.packet_to_send.pack()
+
+# Intermediate nodes process second setup packet
+for i, node in enumerate(reversed(nodes)):
+    result = node.process_incoming_packet(raw_packet)
+    raw_packet = result.packet_to_send.pack()
+"""
+
+SOURCE_2 = """
+# Source processes second setup packet and creates third setup packet (data)
+result = source.process_incoming_packet(raw_packet)
+raw_packet = result.packet_to_send.pack()
 """
 
 HORNET_SETUP_PHASE_STMT = """
@@ -122,8 +171,22 @@ data = b'1'*10
 raw_packet = source.construct_data_packet(source_session_id, data).pack()
 """
 
-NODE_PROCESS_DATA_STMT = """
-nodes[0].process_incoming_packet(raw_packet).packet_to_send.pack()
+INIT_FOR_DEST_DATA = """
+data = b'1'*10
+
+# Source creates data packet
+data_packet = source.construct_data_packet(source_session_id, data)
+raw_packet = data_packet.pack()
+
+# Intermediate nodes process data packet
+for i, node in enumerate(nodes):
+    result = node.process_incoming_packet(raw_packet)
+    raw_packet = result.packet_to_send.pack()
+"""
+
+DEST_DATA = """
+# Destination processes data packet and obtains data
+destination.process_incoming_packet(raw_packet)
 """
 
 HORNET_TRANSMIT_DATA_STMT = """
@@ -279,7 +342,7 @@ def time_statement(experiment_type, base_filename, stmt="pass",
     assert sample_size > 1
     timer = timeit.Timer(stmt, setup=init_stmt)
     # Warm up
-    _ = timer.timeit(number=10)
+    _ = timer.repeat(repeat=10, number=1)
 
     # Actual experiment
     replicates = []
@@ -328,6 +391,55 @@ def time_source_new_session(replications=DEFAULT_REPLICATIONS,
     return output_path
 
 
+def time_node_setup_packet(replications=DEFAULT_REPLICATIONS,
+                           sample_size=DEFAULT_SAMPLE_SIZE, number_of_hops=5,
+                           max_hops=DEFAULT_MAX_HOPS):
+    """
+    Measure the time required for a node to process a setup packet
+    """
+    output_path = time_statement("Node stp proc", 'node_setup',
+                                 NODE_PROCESS_PACKET_STMT,
+                                 get_init_stmt(number_of_hops, max_hops)
+                                 + SOURCE_NEW_SESSION,
+                                 replications, sample_size, 1, number_of_hops,
+                                 max_hops)
+    return output_path
+
+
+def time_dest_setup_packet(replications=DEFAULT_REPLICATIONS,
+                           sample_size=DEFAULT_SAMPLE_SIZE, number_of_hops=5,
+                           max_hops=DEFAULT_MAX_HOPS):
+    """
+    Measure the time required the destination to process the first setup packet
+    and create the second.
+    """
+    output_path = time_statement("Dest stp proc", 'dest_setup',
+                                 DEST_SETUP,
+                                 get_init_stmt(number_of_hops, max_hops)
+                                 + INIT_FOR_DEST_SETUP,
+                                 replications, sample_size, 1, number_of_hops,
+                                 max_hops)
+    return output_path
+
+
+def time_source_setup_packet(replications=DEFAULT_REPLICATIONS,
+                             sample_size=DEFAULT_SAMPLE_SIZE, number_of_hops=5,
+                             max_hops=DEFAULT_MAX_HOPS):
+    """
+    Measure the time required by the source to process the second setup packet.
+    """
+    output_path = time_statement("Source stp proc", 'source_setup',
+                                 SOURCE_2,
+                                 get_init_stmt(number_of_hops, max_hops)
+                                 + INIT_FOR_SOURCE_2,
+                                 replications, sample_size, 1, number_of_hops,
+                                 max_hops)
+    return output_path
+
+
+################ DATA #################
+
+
 def time_source_data_packet(replications=DEFAULT_REPLICATIONS,
                             sample_size=DEFAULT_SAMPLE_SIZE, number_of_hops=5,
                             max_hops=DEFAULT_MAX_HOPS):
@@ -352,7 +464,23 @@ def time_node_data_packet(replications=DEFAULT_REPLICATIONS,
     setup_stmt = (get_init_stmt(number_of_hops, max_hops) +
                   HORNET_SETUP_PHASE_STMT + SOURCE_SEND_PACKET)
     output_path = time_statement("Node data pkt", 'node_data',
-                                 NODE_PROCESS_DATA_STMT, setup_stmt,
+                                 NODE_PROCESS_PACKET_STMT, setup_stmt,
+                                 replications, sample_size, 1, number_of_hops,
+                                 max_hops)
+    return output_path
+
+
+def time_dest_data_packet(replications=DEFAULT_REPLICATIONS,
+                          sample_size=DEFAULT_SAMPLE_SIZE, number_of_hops=5,
+                          max_hops=DEFAULT_MAX_HOPS):
+    """
+    Measure the time required by the destination to process an incoming data
+    packet.
+    """
+    setup_stmt = (get_init_stmt(number_of_hops, max_hops) +
+                  HORNET_SETUP_PHASE_STMT + INIT_FOR_DEST_DATA)
+    output_path = time_statement("Dest data pkt", 'dest_data',
+                                 DEST_DATA, setup_stmt,
                                  replications, sample_size, 1, number_of_hops,
                                  max_hops)
     return output_path
@@ -367,7 +495,8 @@ def time_data(number_of_packets, replications=DEFAULT_REPLICATIONS,
     """
     setup_stmt = (get_init_stmt(number_of_hops, max_hops) +
                   HORNET_SETUP_PHASE_STMT)
-    output_path = time_statement("Complete data", 'data', HORNET_TRANSMIT_DATA_STMT,
+    output_path = time_statement("Complete data", 'data',
+                                 HORNET_TRANSMIT_DATA_STMT,
                                  setup_stmt, replications, sample_size,
                                  number_of_packets, number_of_hops, max_hops)
     return output_path
@@ -386,18 +515,28 @@ def run_all_experiments():
     """
     Run all the experiments
     """
-    all_hops = [3, 4, 5, 6]
-    all_max_hops = [7, 10]
+    all_hops = [2, 3, 4, 5, 6, 7]
+    all_max_hops = [8]
     experiments_paths = []
 
     for number_of_hops, max_hops in itertools.product(all_hops, all_max_hops):
+        # Setup
         experiments_paths.append(time_setup(number_of_hops=number_of_hops,
                                             max_hops=max_hops))
         experiments_paths.append(time_source_new_session(
             number_of_hops=number_of_hops, max_hops=max_hops))
+        experiments_paths.append(time_node_setup_packet(
+            number_of_hops=number_of_hops, max_hops=max_hops))
+        experiments_paths.append(time_dest_setup_packet(
+            number_of_hops=number_of_hops, max_hops=max_hops))
+        experiments_paths.append(time_source_setup_packet(
+            number_of_hops=number_of_hops, max_hops=max_hops))
+        # Data
         experiments_paths.append(time_source_data_packet(
             number_of_hops=number_of_hops, max_hops=max_hops))
         experiments_paths.append(time_node_data_packet(
+            number_of_hops=number_of_hops, max_hops=max_hops))
+        experiments_paths.append(time_dest_data_packet(
             number_of_hops=number_of_hops, max_hops=max_hops))
         experiments_paths.append(time_data(1, number_of_hops=number_of_hops,
                                            max_hops=max_hops))
