@@ -48,6 +48,7 @@
 #include "scion.h"
 #include "libdpdk.h"
 #include "lib/aesni.h"
+#include "lib/Base64.h"
 
 #define RTE_LOGTYPE_HSR RTE_LOGTYPE_USER2
 //#define RTE_LOG_LEVEL RTE_LOG_INFO
@@ -133,6 +134,7 @@ uint32_t ifid2addr[MAX_IFID];
 InterfaceState if_states[MAX_IFID];
 
 struct keystruct rk; // AES-NI key structure
+unsigned char opt_secret_value[16];
 
 /* TODO: Handle IPv6 */
 uint32_t parse_ip(cJSON *addr_obj)
@@ -141,7 +143,9 @@ uint32_t parse_ip(cJSON *addr_obj)
     int i;
     long addr_ints[4];
 
+
     addr = addr_obj->valuestring;
+    fprintf(stderr, addr);
     token = strtok(addr, "./");
     for (i = 0; i < 4; i++) {
         errno = 0;
@@ -152,8 +156,36 @@ uint32_t parse_ip(cJSON *addr_obj)
         }
         token = strtok(NULL, "./");
     }
-    return rte_cpu_to_be_32(
+    uint32_t ret = rte_cpu_to_be_32(
             IPv4(addr_ints[0], addr_ints[1], addr_ints[2], addr_ints[3]));
+    fprintf(stderr, "%x", ret);
+    return ret;
+
+}
+
+uint32_t parse_isd(cJSON *addr_obj)
+{
+    char *addr;
+    int i;
+    long isd;
+
+    addr = addr_obj->valuestring;
+    isd = strtol(addr, NULL, 10);
+
+    return isd;
+}
+
+uint32_t parse_as(cJSON *addr_obj)
+{
+    char *addr;
+    int i;
+    long as;
+    char * p;
+
+    addr = addr_obj->valuestring;
+    as = strtol(addr, &p, 10);
+    as = strtol(p + 1, NULL, 10);
+    return as;
 }
 
 int get_servers(cJSON *root, char *name, uint32_t *arr)
@@ -260,18 +292,13 @@ int scion_init(int argc, char **argv)
                 goto JSON;
             }
             neighbor_ip[1] = neighbor_ip[0];
-            addr_obj = cJSON_GetObjectItem(interface, "NeighborISD");
+            addr_obj = cJSON_GetObjectItem(interface, "ISD_AS");
             if (addr_obj == NULL) {
-                fprintf(stderr, "no ISD specified for neighbor\n");
+                fprintf(stderr, "no ISD_AS specified for neighbor\n");
                 goto JSON;
             }
-            neighbor_isd = addr_obj->valueint;
-            addr_obj = cJSON_GetObjectItem(interface, "NeighborAD");
-            if (addr_obj == NULL) {
-                fprintf(stderr, "no AD specified for neighbor\n");
-                goto JSON;
-            }
-            neighbor_ad = addr_obj->valueint;
+            neighbor_isd = parse_isd(addr_obj);
+            neighbor_ad = parse_as(addr_obj);
 
             /* Get IFID */
             ifid_obj = cJSON_GetObjectItem(interface, "IFID");
@@ -308,18 +335,13 @@ int scion_init(int argc, char **argv)
     path_server_count = get_servers(root, "PathServers", path_servers);
 
     /* Get ISD/AD */
-    addr_obj = cJSON_GetObjectItem(root, "ISDID");
+    addr_obj = cJSON_GetObjectItem(root, "ISD_AS");
     if (addr_obj == NULL) {
         fprintf(stderr, "no ISD info\n");
         goto JSON;
     }
-    my_isd = addr_obj->valueint;
-    addr_obj = cJSON_GetObjectItem(root, "ADID");
-    if (addr_obj == NULL) {
-        fprintf(stderr, "no AD info\n");
-        goto JSON;
-    }
-    my_ad = addr_obj->valueint;
+    my_isd = parse_isd(addr_obj);
+    my_ad = parse_as(addr_obj);
 
     /* Done with topology file */
     cJSON_Delete(root);
@@ -353,7 +375,7 @@ int scion_init(int argc, char **argv)
         fprintf(stderr, "failed to parse config file\n");
         goto UNMAP;
     }
-    key_obj = cJSON_GetObjectItem(root, "MasterADKey");
+    key_obj = cJSON_GetObjectItem(root, "MasterASKey");
     if (key_obj == NULL) {
         fprintf(stderr, "no master key in config file\n");
         goto JSON;
@@ -403,6 +425,16 @@ int scion_init(int argc, char **argv)
     // AES-NI key setup
     rk.roundkey = aes_assembly_init(key);
     rk.iv = malloc(16 * sizeof(char));
+
+    // OPT Secret Value Setup
+    unsigned char *pass;
+    size_t pass_length;
+    Base64Decode(key, &pass, &pass_length);
+    unsigned char *salt_opt = (unsigned char*) "Derive OPT secret value";
+    int ic = 1000;
+    PKCS5_PBKDF2_HMAC_SHA1((char*) pass, 16, salt_opt, strlen(salt_opt),
+                           ic, 16, opt_secret_value);
+    free(pass);
 
     // DPDK setting
 
@@ -914,9 +946,9 @@ static inline void deliver(struct rte_mbuf *m, uint32_t ptype,
 
         // FIXME
         // get scion udp port number
-        struct udp_hdr *scion_udp_hdr =
-            (struct udp_hdr *)((uint8_t *)sch + sch->headerLen);
-        udp_hdr->dst_port = scion_udp_hdr->dst_port;
+        struct udp_hdr *scion_udp_hdr = find_udp_header(sch);
+        if(scion_udp_hdr)
+            udp_hdr->dst_port = scion_udp_hdr->dst_port;
         printf("udp dport=%d\n", ntohs(udp_hdr->dst_port));
     }
 
@@ -1343,6 +1375,16 @@ int needs_local_processing(SCIONCommonHeader *sch)
     return 0;
 }
 
+#define PRINT_BUFFER(buffer, length, name)          \
+do{                                                 \
+    int i;                                          \
+    RTE_LOG(DEBUG, HSR, "%s\n", name);              \
+    for(i = 0; i < length; i++) {                   \
+        RTE_LOG(DEBUG, HSR, "%d ", buffer[i]);      \
+    }                                               \
+    RTE_LOG(DEBUG, HSR, "\n");                      \
+}while(0)
+
 void handle_request(struct rte_mbuf *m, uint8_t dpdk_rx_port)
 {
     struct ether_hdr *eth_hdr;
@@ -1376,26 +1418,27 @@ void handle_request(struct rte_mbuf *m, uint8_t dpdk_rx_port)
 
         uint8_t *opt_ext_hdr = find_extension(sch, HOP_BY_HOP, OPT_EXTENSION_TYPE);
         if (opt_ext_hdr){
+
             uint8_t *session_id = opt_ext_hdr + SCION_EXT_LINE;
             uint8_t *pvf = session_id + 2 * SCION_EXT_LINE;
 
-            unsigned char key[16] = {0x00,0x01,0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15};
-            unsigned char iv[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+            unsigned char iv[16] = {0};
             struct keystruct rk; // AES-NI key structure
-            rk.roundkey = aes_assembly_init(key);
             rk.iv = iv;
-            unsigned char input[16] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
-            unsigned char mac[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-            CBCMAC1BLK(rk.roundkey, rk.iv, input, mac);
 
-            int i;
-            for(i = 0; i < 16; i++){
-                printf("%u\n", mac[i]);
-            }
+            // compute Session Key
+            unsigned char session_key[16] = {0};
+            rk.roundkey = aes_assembly_init(opt_secret_value);
+            CBCMAC1BLK(rk.roundkey, rk.iv, session_id, session_key);
+            free_aligned(rk.roundkey);
 
+            // compute pvf
+            unsigned char buffer[16] = {0};
+            rk.roundkey = aes_assembly_init(session_key);
+            CBCMAC1BLK(rk.roundkey, rk.iv, pvf, buffer);
+            free_aligned(rk.roundkey);
 
-
-
+            memcpy(pvf, buffer, 16);
         }
 
         if (needs_local_processing(sch)) {

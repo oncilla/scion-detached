@@ -21,6 +21,11 @@ Create two taps.  The VM uses eth10 and eth11 to communicate with mininet.
 sudo ip tuntap add dev eth10 mode tap
 sudo ip tuntap add dev eth11 mode tap
 ```
+for convenience run:
+```
+cd hsr/
+sudo sh interfaces.sh
+```
 
 Build and start VM.
 ```
@@ -33,16 +38,27 @@ Open a console.
 vagrant ssh
 ```
 
+Install libssl-dev (one time)
+```
+sudo apt-get install libssl-dev
+```
+
 Build HSR
 ```
 cd ~/scion/lib/libscion
 make
 cd ~/scion/hsr/lib
 ./mk_lnx_lib.sh
+make
 cd ~/scion/hsr/cJSON
 make
 cd ~/scion/hsr
 make
+```
+
+for convenience run:
+```
+sh mk_dependencies.sh
 ```
 
 # Run mininet and HSR  

@@ -35,11 +35,33 @@ uint8_t * find_extension(uint8_t *buf, uint8_t ext_class, uint8_t ext_type)
         next_header = *ptr++;
         header_len = *ptr++;
         type = *ptr++;
-        if (curr_header == ext_class && type == ext_type)
-            return ptr - 3;
+        if (curr_header == ext_class && type == ext_type){
+            uint8_t * ret = ptr-3;
+            return ret;
+        }
         uint8_t real_len = (header_len + 1) * SCION_EXT_LINE;
         curr_header = next_header;
         ptr += real_len - SCION_EXT_SUBHDR;
     }
+    return NULL;
+}
+
+uint8_t * find_udp_header(uint8_t *buf){
+    SCIONCommonHeader *sch = (SCIONCommonHeader *)buf;
+    uint8_t next_header = sch->nextHeader;
+    uint8_t curr_header = next_header;
+    uint8_t header_len = sch->headerLen;
+    uint8_t *ptr = buf + header_len;
+    uint8_t type = 0;
+    while (!is_l4(curr_header)) {
+        next_header = *ptr++;
+        header_len = *ptr++;
+        type = *ptr++;
+        uint8_t real_len = (header_len + 1) * SCION_EXT_LINE;
+        curr_header = next_header;
+        ptr += real_len - SCION_EXT_SUBHDR;
+    }
+    if(curr_header == L4_UDP)
+        return ptr;
     return NULL;
 }

@@ -20,4 +20,7 @@
 #define getHeaderLen(ext) ((ext->headerLen + 1) * SCION_EXT_LINE)
 #define isProbeAck(ext) (*(uint8_t *)((ext)->data))
 
+uint8_t * find_extension(uint8_t *buf, uint8_t ext_class, uint8_t ext_type);
+uint8_t * find_udp_header(uint8_t *buf);
+
 #endif

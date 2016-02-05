@@ -49,7 +49,7 @@ CFLAGS += -O9 -w -I$(S)/../lib/libscion
 #CFLAGS += $(WERROR_FLAGS)
 
 LDLIBS += -L$(S)/lib -L$(S)/cJSON -L$(S)/../lib/libscion
-EXTRA_LDFLAGS += -laesni -lcJSON -lscion
+EXTRA_LDFLAGS += -laesni -lcJSON -lscion -lbase64 -lcrypto
 
 
 include $(RTE_SDK)/mk/rte.extapp.mk
