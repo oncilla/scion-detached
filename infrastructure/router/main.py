@@ -76,6 +76,7 @@ from lib.types import (
     PathMgmtType as PMT,
     PayloadClass,
     RouterFlag,
+    DRKeyType as DRKT,
 )
 from lib.util import SCIONTime, sleep_interval
 
@@ -140,6 +141,8 @@ class Router(SCIONElement):
                 lambda: self.relay_cert_server_packet),
             PayloadClass.PATH: defaultdict(
                 lambda: self.process_path_mgmt_packet),
+            PayloadClass.DRKEY: defaultdict(
+                lambda: self.process_drkey_packet),
         }
 
         if not is_sim:
@@ -335,6 +338,27 @@ class Router(SCIONElement):
                 return
             port = SCION_UDP_PORT
         self.send(spkt, addr, port)
+
+    def process_drkey_packet(self, drkey_pkt, from_local_ad):
+        """
+        Process path management packets.
+
+        :param mgmt_pkt: The path mgmt packet.
+        :type mgmt_pkt: :class:`lib.packet.path_mgmt.PathMgmtPacket`
+        :param from_local_ad: whether or not the packet is from the local AD.
+        :type from_local_ad: bool
+        """
+        payload = drkey_pkt.get_payload()
+
+        if payload.PAYLOAD_TYPE == DRKT.REQUEST_KEY:
+            # handle state update
+            logging.debug("Received DRKey Request:\n%s",
+                          str(drkey_pkt.get_payload()))
+            self.relay_cert_server_packet(drkey_pkt, from_local_ad)
+        if not from_local_ad and drkey_pkt.path.is_last_path_hof():
+            self.deliver(drkey_pkt, PT.PATH_MGMT)
+        else:
+            self.forward_packet(drkey_pkt, from_local_ad)
 
     def process_path_mgmt_packet(self, mgmt_pkt, from_local_ad):
         """
