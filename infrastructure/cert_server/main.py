@@ -35,10 +35,14 @@ from lib.packet.cert_mgmt import (
     TRCReply,
     TRCRequest,
 )
+from lib.packet.drkey import (
+    DRKeyRequestKey,
+    DRKeyReplyKey
+)
 from lib.packet.scion import PacketType as PT, SCIONL4Packet
 from lib.requests import RequestHandler
 from lib.thread import thread_safety_net
-from lib.types import CertMgmtType, PayloadClass
+from lib.types import CertMgmtType, DRKeyType as DRKT, PayloadClass
 from lib.util import (
     SCIONTime,
     sleep_interval,
@@ -77,6 +81,9 @@ class CertServer(SCIONElement):
                 CertMgmtType.TRC_REQ: self.process_trc_request,
                 CertMgmtType.TRC_REPLY: self.process_trc_reply,
             },
+            PayloadClass.DRKEY: {
+                DRKT.REQUEST_KEY: self.proccess_drkey_request,
+            }
         }
 
         if not is_sim:
@@ -177,6 +184,16 @@ class CertServer(SCIONElement):
             self.send(rep_pkt, next_hop, port)
         else:
             logging.warning("Reply not sent: no destination found")
+
+    def proccess_drkey_request(self, pkt):
+        """
+        Process a certificate chain request.
+
+        :param pkt: DRKey request packet.
+        :type pkt: DRKeyRequestKey
+        """
+        payload = pkt.get_payload()
+        assert isinstance(payload, DRKeyRequestKey)
 
     def process_cert_chain_request(self, pkt):
         """
