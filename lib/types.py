@@ -127,8 +127,8 @@ class DRKeyType(TypeBase):
     """
     REQUEST_KEY = 0
     REPLY_KEY = 1
-    SEND_KEY = 2
-    ACKNOWLEDGE_KEY = 3
+    SEND_KEYS = 2
+    ACKNOWLEDGE_KEYS = 3
 
 
 ############################
