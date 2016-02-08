@@ -80,6 +80,7 @@ class PayloadClass(TypeBase):
     IFID = 1
     CERT = 2
     PATH = 3
+    DRKEY = 4
 
 
 class CertMgmtType(TypeBase):
@@ -118,6 +119,16 @@ class PCBType(TypeBase):
 
 class IFIDType(object):
     PAYLOAD = 0
+
+
+class DRKeyType(TypeBase):
+    """
+    Enum of drkey packet types.
+    """
+    REQUEST_KEY = 0
+    REPLY_KEY = 1
+    SEND_KEY = 2
+    ACKNOWLEDGE_KEY = 3
 
 
 ############################

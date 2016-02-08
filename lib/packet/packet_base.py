@@ -212,3 +212,8 @@ class SCIONPayloadBase(PayloadBase):  # pragma: no cover
 class PathMgmtPayloadBase(SCIONPayloadBase):
     PAYLOAD_CLASS = PayloadClass.PATH
     PAYLOAD_TYPE = None
+
+
+class DRKeyPayloadBase(SCIONPayloadBase):
+    PAYLOAD_CLASS = PayloadClass.DRKEY
+    PAYLOAD_TYPE = None

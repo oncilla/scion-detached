@@ -22,42 +22,30 @@ import struct
 from collections import defaultdict
 
 # SCION
-from lib.types import PathMgmtType as PMT, PathSegmentType as PST
+from lib.types import DRKeyType as DRKT
 from lib.errors import SCIONParseError
-from lib.packet.packet_base import PathMgmtPayloadBase
-from lib.packet.pcb import PathSegment
+from lib.packet.packet_base import DRKeyPayloadBase
 from lib.packet.scion_addr import ISD_AD
-from lib.packet.rev_info import RevocationInfo
 from lib.util import Raw
-
-from lib.types import TypeBase
-
-
-class DRKeyType(TypeBase):
-    """
-    Enum of drkey packet types.
-    """
-    REQUEST_KEY = 0
-    REPLY_KEY = 1
-    SEND_KEY = 2
-    ACKNOWLEDGE_KEY = 3
 
 
 class DRKeyConstants(object):
     """
     Constants for drkey.
     """
-    PRIVATE_KEY_BYTE_LENGTH = 16 # TODO only placeholder
+    SESSION_KEY_BYTE_LENGTH = 16
+    SIGNATURE_BYTE_LENGTH = 16
+    PUBLIC_KEY_BYTE_LENGTH = 16 # TODO only placeholder
     SESSION_ID_BYTE_LENGTH = 16
 
 
-class DRKeyRequestKey(object):
+class DRKeyRequestKey(DRKeyPayloadBase):
     """
-    TODO
+    DRKeyRequestKey class used in sending DRKey requests.
     """
     NAME = "DRKeyRequest"
-    PAYLOAD_TYPE = DRKeyType.REQUEST_KEY
-    LEN = 00  # TODO(rsd) Set length usefully
+    PAYLOAD_TYPE = DRKT.REQUEST_KEY
+    LEN = 1 + DRKeyConstants.SESSION_ID_BYTE_LENGTH + DRKeyConstants.PUBLIC_KEY_BYTE_LENGTH
 
     def __init__(self, raw=None):  # pragma: no cover
         """
@@ -68,8 +56,8 @@ class DRKeyRequestKey(object):
         """
         super().__init__()
         self.hop = 0
-        self.session_id = []
-        self.private_key = []
+        self.session_id
+        self.public_key
         if raw is not None:
             self._parse(raw)
 
@@ -80,65 +68,169 @@ class DRKeyRequestKey(object):
         data = Raw(raw, self.NAME, len(raw))
         self.hop = data.pop(1)
         self.session_id = data.pop(DRKeyConstants.SESSION_ID_BYTE_LENGTH)
-        self.private_key = data.pop(DRKeyConstants.PRIVATE_KEY_BYTE_LENGTH)
+        self.public_key = data.pop(DRKeyConstants.PUBLIC_KEY_BYTE_LENGTH)
 
     @classmethod
-    def from_values(cls, hop, session_id, private_key):
+    def from_values(cls, hop, session_id, public_key):
         """
-        Returns PathSegmentInfo with fields populated from values.
-        :param hop: hop the packet is addressed to
-        :type: int (PathSegmentType)
+        Returns DRKeyRequestKey with fields populated from values.
+        :param hop: hop on path the packet is addressed to
+        :type: int
         :param session_id: session id
-        :type session_id: int TODO replace
-        :param private_key: private key
-        :type private_key: byte array TODO replace
+        :type session_id: bytes
+        :param public_key: public key
+        :type public_key: bytes
         """
         inst = cls()
         inst.hop = hop
         inst.session_id = session_id
-        inst.private_key = private_key
+        inst.public_key = public_key
         return inst
 
     def pack(self):
         packed = []
         packed.append(struct.pack("!B", self.hop))
-        packed.append(struct.pack())
-        packed.append(ISD_AD(self.dst_isd, self.dst_ad).pack())
+        packed.append(self.session_id)
+        packed.append(self.public_key)
         return b"".join(packed)
 
     def __len__(self):  # pragma: no cover
         return self.LEN
 
     def __str__(self):
-        return "[%s(%dB): seg type:%s src isd/ad: %s/%s dst isd/ad: %s/%s]" % (
-            self.NAME, len(self), PST.to_str(self.seg_type),
-            self.src_isd, self.src_ad, self.dst_isd, self.dst_ad,
+        return "[%s(%dB): hop:%d SessionID: %s PubKey: %s]" % (
+            self.NAME, len(self), self.hop, str(self.session_id), str(self.public_key)
         )
 
 
-class DRKeyResponseKey(object):
-    pass
+class DRKeyReplyKey(DRKeyPayloadBase):
+    """
+    DRKeyReplyKey class used in answering DRKey requests.
+    """
+    NAME = "DRKeyReply"
+    PAYLOAD_TYPE = DRKT.REPLY_KEY
+    LEN = 1 + DRKeyConstants.SIGNATURE_BYTE_LENGTH + DRKeyConstants.SESSION_KEY_BYTE_LENGTH
+
+    def __init__(self, raw=None):  # pragma: no cover
+        """
+        Initialize an instance of the class DRKeyRequestKey.
+
+        :param raw:
+        :type raw:
+        """
+        super().__init__()
+        self.hop = 0
+        self.encrypted_session_key
+        self.signature  # signature for encrypted session key || session id
+        if raw is not None:
+            self._parse(raw)
+
+    def _parse(self, raw):
+        """
+        Populates fields from a raw bytes block.
+        """
+        data = Raw(raw, self.NAME, len(raw))
+        self.hop = data.pop(1)
+        self.signature = data.pop(DRKeyConstants.SIGNATURE_BYTE_LENGTH)
+        self.encrypted_session_key = data.pop(DRKeyConstants.SESSION_KEY_BYTE_LENGTH)
+
+    @classmethod
+    def from_values(cls, hop, signature, encrypted_session_key):
+        """
+        Returns PathSegmentInfo with fields populated from values.
+        :param hop: hop the packet is addressed to
+        :type: int (PathSegmentType)
+        :param signature: signature of concatenated {encrypted_session_key, session_id}
+        :type signature: bytes
+        :param encrypted_session_key: encrypted session key
+        :type encrypted_session_key: bytes
+        """
+        inst = cls()
+        inst.hop = hop
+        inst.signature = signature
+        inst.encrypted_session_key = encrypted_session_key
+        return inst
+
+    def pack(self):
+        packed = []
+        packed.append(struct.pack("!B", self.hop))
+        packed.append(self.signature)
+        packed.append(self.encrypted_session_key)
+        return b"".join(packed)
+
+    def __len__(self):  # pragma: no cover
+        return self.LEN
+
+    def __str__(self):
+        return "[%s(%dB): hop:%d EncSessionKey: %s Signature: %s]" % (
+            self.NAME, len(self), self.hop, str(self.encrypted_session_key), str(self.signature)
+        )
 
 
-class DRKeySendKeys(object):
-    pass
+class DRKeySendKeys(DRKeyPayloadBase):
+    """
+    DRKeySendKeys class used in sending DRKeys to the destination.
+    """
+    NAME = "DRKeySendKeys"
+    PAYLOAD_TYPE = DRKT.SEND_KEYS
+
+    def __init__(self, raw=None):  # pragma: no cover
+        """
+        Initialize an instance of the class DRKeyRequestKey.
+
+        :param raw:
+        :type raw:
+        """
+        super().__init__()
+        self.keys_blob
+        if raw is not None:
+            self._parse(raw)
+
+    def _parse(self, raw):
+        """
+        Populates fields from a raw bytes block.
+        """
+        data = Raw(raw, self.NAME, len(raw))
+        self.keys_blob = data.pop()
+
+    @classmethod
+    def from_values(cls, keys_blob):
+        """
+        Returns PathSegmentInfo with fields populated from values.
+        :param keys_blob: encrypted blob of concatenated {session_id, session_key_1, ..., session_key_n}
+        :type keys_blob: bytes
+        """
+        inst = cls()
+        inst.keys_blob = keys_blob
+        return inst
+
+    def pack(self):
+        return self.keys_blob
+
+    def __len__(self):  # pragma: no cover
+        return len(self.keys_blob)
+
+    def __str__(self):
+        return "[%s(%dB): Keys Blob: %s]" % (
+            self.NAME, len(self), str(self.keys_blob)
+        )
 
 
-class DRKeyAcknowledgeKeys(object):
+class DRKeyAcknowledgeKeys(DRKeyPayloadBase):
     pass
 
 
 _TYPE_MAP = {
-    DRKeyType.REQUEST_KEY: (DRKeyRequestKey, None),
-    DRKeyType.REPLY_KEY: (DRKeyResponseKey, None),
-    DRKeyType.SEND_KEYS: (DRKeySendKeys, None),
-    DRKeyType.ACKNOWLEDGE_KEYS: (DRKeyAcknowledgeKeys, None),
+    DRKT.REQUEST_KEY: (DRKeyRequestKey, None),
+    DRKT.REPLY_KEY: (DRKeyReplyKey, None),
+    DRKT.SEND_KEYS: (DRKeySendKeys, None),
+    DRKT.ACKNOWLEDGE_KEYS: (DRKeyAcknowledgeKeys, None),
 }
 
 
-def parse_pathmgmt_payload(type_, data):
+def parse_drkey_payload(type_, data):
     if type_ not in _TYPE_MAP:
-        raise SCIONParseError("Unsupported path management type: %s", type_)
+        raise SCIONParseError("Unsupported drkey type: %s", type_)
     handler, len_ = _TYPE_MAP[type_]
     return handler(data.pop(len_))
 
@@ -157,7 +249,7 @@ Source S
 3. for intermediate in Path:
 		request Key from intermediate: {req, Pkd⁻¹}
 		Ki = recv(request)
-4. send Enc(K_sdc,{k1, ..., Kn, K_d}) to D
+4. send Enc(K_sdc,{SessionID,k1, ..., Kn, K_d}) to D
 5. recv ack
 
 
