@@ -18,18 +18,18 @@
 """
 
 # Stdlib
-import copy
 import ipaddress
 import logging
 import os
-from ctypes import (byref, CDLL, c_double, c_int, c_short, c_ubyte,
-                    c_uint, c_ulong, c_ushort, POINTER, Structure)
+import struct
+from ctypes import (byref, CDLL, c_int, c_short, c_ubyte, c_uint, Structure)
 
 # SCION
 from lib.packet.scion_addr import ISD_AD
+from lib.util import Raw
 
 ByteArray16 = c_ubyte * 16
-MAX_PATHS = 10
+MAX_PATHS = 20
 
 
 class C_HostAddr(Structure):
@@ -43,73 +43,127 @@ class C_SCIONAddr(Structure):
                 ("host", C_HostAddr)]
 
 
-class C_SCIONInterface(Structure):
-    _fields_ = [("ad", c_uint),
-                ("isd", c_ushort),
-                ("interface", c_ushort)]
+class SCIONInterface(object):
+    """
+    Class representing interface info, i.e. ISD_AD + IFID
 
+    :ivar int isd: ISD identifier
+    :ivar int ad: AD identifier
+    :ivar int ifid: Interface identifier
+    """
+    def __init__(self, raw=None):
+        """
+        Initialize an instance of the class SCIONInterface
 
-class C_SCIONStats(Structure):
-    _fields_ = [("exists", c_int * MAX_PATHS),
-                ("receivedPackets", c_int * MAX_PATHS),
-                ("sentPackets", c_int * MAX_PATHS),
-                ("ackedPackets", c_int * MAX_PATHS),
-                ("rtts", c_int * MAX_PATHS),
-                ("lossRates", c_double * MAX_PATHS),
-                ("ifCounts", c_int * MAX_PATHS),
-                ("ifLists", POINTER(C_SCIONInterface) * MAX_PATHS),
-                ("highestReceived", c_ulong),
-                ("highestAcked", c_ulong)]
+        :param raw: Byte string representing interface info
+        :type raw: bytes object
+        """
+        self.isd = None
+        self.ad = None
+        self.ifid = None
+        if raw:
+            self._parse(raw)
+
+    def _parse(self, raw):
+        """
+        Parse byte string representation
+
+        :param raw: Byte string representing interface info
+        :type raw: bytes object
+        """
+        data = Raw(raw, "Serialized SCION Interface", ISD_AD.LEN + 2)
+        isd_ad = ISD_AD.from_raw(data.pop(ISD_AD.LEN))
+        self.isd, self.ad = isd_ad.isd, isd_ad.ad
+        self.ifid = struct.unpack("H", data.pop())[0]
 
 
 class ScionStats(object):
     """
-    Python class containing SCION socket traffic data
+    Python class containing SCION socket traffic data.
+    This class should ONLY be instantiated by the getStats call in
+    ScionBaseSocket.
     """
 
-    def __init__(self, stats):
+    FIXED_DATA_LEN = 28
+
+    def __init__(self, raw=None):
         """
-        Python representation of SCION traffic info struct obtained from
+        Python representation of SCION traffic data obtained from
         getStats() call. Allows Python wrapper user to not worry about
         dereferencing pointers or freeing memory.
+
         :param stats: Struct returned by ScionBaseSocket.getStats()
         :type: C_SCIONStats
         """
-        self.exists = list(stats.exists)
-        self.receivedPackets = list(stats.receivedPackets)
-        self.sentPackets = list(stats.sentPackets)
-        self.ackedPackets = list(stats.ackedPackets)
-        self.rtts = list(stats.rtts)
-        self.lossRates = list(stats.lossRates)
-        self.ifCounts = list(stats.ifCounts)
-        # TODO(ercanucan): Enable this stats later on as currently this
-        # piece of code occasionaly throws nil pointer exceptions.
-        # self.ifLists = []
-        # for i in range(MAX_PATHS):
-        #     iflist = []
-        #     if self.ifCounts[i]:
-        #         for j in range(self.ifCounts[i]):
-        #             iflist.append(copy.deepcopy(stats.ifLists[i][j]))
-        #     self.ifLists.append(iflist)
-        self.highestReceived = copy.deepcopy(stats.highestReceived)
-        self.highestAcked = copy.deepcopy(stats.highestAcked)
+        self.received_packets = []
+        self.sent_packets = []
+        self.acked_packets = []
+        self.rtts = []
+        self.loss_rates = []
+        self.if_counts = []
+        self.if_lists = []
+        if raw:
+            self._parse(raw)
+
+    def _parse(self, raw):
+        """
+        Parse serialized stats data
+
+        :param raw: Serialized stats data
+        :type raw: bytes object
+        """
+        data = Raw(raw, "Serialized SCION stats", self.FIXED_DATA_LEN, True)
+        while len(data):
+            values = data.pop(self.FIXED_DATA_LEN)
+            rp, sp, ap, rtt, lr, ifc = struct.unpack("IIIIdI", values)
+            self.received_packets.append(rp)
+            self.sent_packets.append(sp)
+            self.acked_packets.append(ap)
+            self.rtts.append(rtt)
+            self.loss_rates.append(lr)
+            self.if_counts.append(ifc)
+            if ifc:
+                if_list = []
+                for j in range(ifc):
+                    saddr = SCIONInterface(data.pop(ISD_AD.LEN + 2))
+                    if_list.append(saddr)
+                self.if_lists.append(if_list)
 
     def __str__(self):
         """
         String representation of a ScionStats object.
+        :returns: The stats as a string.
+        :rtype: str
         """
         result = []
-        result.append("Sent Packets: " + str(self.sentPackets))
-        result.append("Received Packets: " + str(self.receivedPackets))
-        result.append("Acked Packets: " + str(self.ackedPackets))
+        result.append("Sent Packets: " + str(self.sent_packets))
+        result.append("Received Packets: " + str(self.received_packets))
+        result.append("Acked Packets: " + str(self.acked_packets))
         result.append("RTTs: " + str(self.rtts))
-        result.append("Loss-Rates: " + str(self.lossRates))
+        result.append("Loss-Rates: " + str(self.loss_rates))
         return "\n".join(result)
+
+    def to_dict(self):
+        """
+        Represents and returns the stats in the form of a dictionary.
+        :returns: The stats as a dictionary object.
+        :rtype: dict
+        """
+        result = {}
+        result["sent_packets"] = self.sent_packets
+        result["received_packets"] = self.received_packets
+        result["acked_packets"] = self.acked_packets
+        result["rtts"] = self.rtts
+        result["loss_rates"] = self.loss_rates
+        return result
 
 
 SHARED_LIB_LOCATION = os.path.join("endhost", "ssp")
 SHARED_LIB_SERVER = "libserver.so"
 SHARED_LIB_CLIENT = "libclient.so"
+
+# Slightly more than enough for 20 paths with 20 IFs each
+MAX_STATS_BUFFER = 3072
 
 
 class ScionBaseSocket(object):
@@ -201,12 +255,12 @@ class ScionBaseSocket(object):
         :returns: Python class containing socket traffic data
         :rtype: ScionStats
         """
-        self.libsock.SCIONGetStats.restype = POINTER(C_SCIONStats)
-        raw_stats = self.libsock.SCIONGetStats(self.fd)
-        if not raw_stats:
+        self.libsock.SCIONGetStats.restype = c_int
+        buf = bytes(MAX_STATS_BUFFER)
+        stats_len = self.libsock.SCIONGetStats(self.fd, buf, MAX_STATS_BUFFER)
+        if not stats_len:
             return None
-        py_stats = ScionStats(raw_stats.contents)
-        self.libsock.SCIONDestroyStats(raw_stats)
+        py_stats = ScionStats(buf[:stats_len])
         return py_stats
 
     def shutdown(self, how):

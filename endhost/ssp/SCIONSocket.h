@@ -4,6 +4,8 @@
 #include <pthread.h>
 #include <sys/types.h>
 
+#include <vector>
+
 #include "SCIONDefines.h"
 #include "DataStructures.h"
 #include "SCIONProtocol.h"
@@ -41,12 +43,15 @@ public:
     int registerSelect(Notification *n, int mode);
     void deregisterSelect(int index);
 
-    SCIONStats * getStats();
+    void * getStats(void *buf, int len);
 
     int shutdown();
     void removeChild(SCIONSocket *child);
 
 private:
+    bool checkChildren(SCIONPacket *packet, uint8_t *ptr);
+    void signalSelect();
+
     uint16_t                   mSrcPort;
     uint16_t                   mDstPort;
     int                        mProtocolID;

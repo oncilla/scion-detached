@@ -1,18 +1,9 @@
-#include <stdio.h>
-#include <string.h>
 #include <unistd.h>
-#include <netinet/in.h>
 #include <arpa/inet.h>
-#include <sys/types.h>
-#include <pthread.h>
-#include <errno.h>
-#include <fcntl.h>
 #include <signal.h>
-#include <semaphore.h>
-#include <sys/mman.h>
 
-#include "SCIONSocket.h"
 #include "Extensions.h"
+#include "SCIONSocket.h"
 
 void signalHandler(int signum)
 {
@@ -174,6 +165,40 @@ int SCIONSocket::recv(uint8_t *buf, size_t len, SCIONAddr *srcAddr)
     return mProtocol->recv(buf, len, srcAddr);
 }
 
+bool SCIONSocket::checkChildren(SCIONPacket *packet, uint8_t *ptr)
+{
+    bool claimed = false;
+    pthread_mutex_lock(&mAcceptMutex);
+    std::vector<SCIONSocket *>::iterator it = mAcceptedSockets.begin();
+    for (; it != mAcceptedSockets.end(); it++) {
+        SCIONSocket *sock = *it;
+        if (!sock)
+            continue;
+        SCIONProtocol *proto = (*it)->mProtocol;
+        if (proto && proto->claimPacket(packet, ptr)) {
+            DEBUG("socket %p claims packet\n", (*it));
+            proto->handlePacket(packet, ptr);
+            claimed = true;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&mAcceptMutex);
+    return claimed;
+}
+
+void SCIONSocket::signalSelect()
+{
+    pthread_mutex_lock(&mSelectMutex);
+    std::map<int, Notification>::iterator i;
+    for (i = mSelectRead.begin(); i != mSelectRead.end(); i++) {
+        Notification &n = i->second;
+        pthread_mutex_lock(n.mutex);
+        pthread_cond_signal(n.cond);
+        pthread_mutex_unlock(n.mutex);
+    }
+    pthread_mutex_unlock(&mSelectMutex);
+}
+
 void SCIONSocket::handlePacket(uint8_t *buf, size_t len, struct sockaddr_in *addr)
 {
     DEBUG("received SCION packet: %lu bytes\n", len);
@@ -214,45 +239,24 @@ void SCIONSocket::handlePacket(uint8_t *buf, size_t len, struct sockaddr_in *add
     uint8_t *ptr = parseExtensions(&packet->header, buf + sch.headerLen);
 
     if (!mProtocol) {
-        pthread_mutex_lock(&mAcceptMutex);
-        std::vector<SCIONSocket *>::iterator it = mAcceptedSockets.begin();
-        for (; it != mAcceptedSockets.end(); it++) {
-            SCIONSocket *sock = *it;
-            if (!sock)
-                continue;
-            SCIONProtocol *proto = (*it)->mProtocol;
-            if (proto && proto->claimPacket(packet, buf + sch.headerLen)) {
-                DEBUG("socket %p claims packet\n", (*it));
-                proto->handlePacket(packet, ptr);
-                pthread_mutex_unlock(&mAcceptMutex);
-                return;
-            }
+        bool claimed = checkChildren(packet, ptr);
+        if (!claimed) {
+            // accept: create new socket to handle connection
+            SCIONAddr addrs[1];
+            addrs[0] = srcAddr;
+            DEBUG("create new socket to handle incoming flow\n");
+            SCIONSocket *s = new SCIONSocket(mProtocolID, (SCIONAddr *)addrs, 1, -1, mDstPort);
+            s->mParent = this;
+            s->mProtocol->setReceiver(true);
+            s->mProtocol->createManager(s->mDstAddrs);
+            s->mProtocol->start(packet, buf + sch.headerLen, s->mDispatcherSocket);
+            s->mRegistered = true;
+            pthread_cond_signal(&s->mRegisterCond);
+            pthread_mutex_lock(&mAcceptMutex);
+            mAcceptedSockets.push_back(s);
+            pthread_mutex_unlock(&mAcceptMutex);
+            pthread_cond_signal(&mAcceptCond);
         }
-        pthread_mutex_unlock(&mAcceptMutex);
-        // accept: create new socket to handle connection
-        SCIONAddr addrs[1];
-        addrs[0] = srcAddr;
-        DEBUG("create new socket to handle incoming flow\n");
-        SCIONSocket *s = new SCIONSocket(mProtocolID, (SCIONAddr *)addrs, 1, -1, mDstPort);
-        s->mParent = this;
-        s->mProtocol->setReceiver(true);
-        s->mProtocol->createManager(s->mDstAddrs);
-        s->mProtocol->start(packet, buf + sch.headerLen, s->mDispatcherSocket);
-        s->mRegistered = true;
-        pthread_cond_signal(&s->mRegisterCond);
-        pthread_mutex_lock(&mAcceptMutex);
-        mAcceptedSockets.push_back(s);
-        pthread_mutex_unlock(&mAcceptMutex);
-        pthread_cond_signal(&mAcceptCond);
-        pthread_mutex_lock(&mSelectMutex);
-        std::map<int, Notification>::iterator i;
-        for (i = mSelectRead.begin(); i != mSelectRead.end(); i++) {
-            Notification &n = i->second;
-            pthread_mutex_lock(n.mutex);
-            pthread_cond_signal(n.cond);
-            pthread_mutex_unlock(n.mutex);
-        }
-        pthread_mutex_unlock(&mSelectMutex);
         return;
     }
 
@@ -296,17 +300,53 @@ bool SCIONSocket::bypassDispatcher()
     return mProtocolID == SCION_PROTO_UDP;
 }
 
-SCIONStats * SCIONSocket::getStats()
+void * SCIONSocket::getStats(void *buf, int len)
 {
-    if (mProtocol) {
-        SCIONStats *stats = (SCIONStats *)malloc(sizeof(SCIONStats));
-        memset(stats, 0, sizeof(SCIONStats));
-        if (!stats)
-            return NULL;
-        mProtocol->getStats(stats);
+    if (!mProtocol)
+        return NULL;
+
+    SCIONStats *stats = (SCIONStats *)malloc(sizeof(SCIONStats));
+    memset(stats, 0, sizeof(SCIONStats));
+    if (!stats)
+        return NULL;
+    mProtocol->getStats(stats);
+    if (!buf || len <= 0)
         return stats;
+    int pathLen;
+    uint8_t *ptr = (uint8_t *)buf;
+    for (int i = 0; i < MAX_TOTAL_PATHS; i++) {
+        if (!stats->exists[i])
+            continue;
+        int offset = ptr - (uint8_t *)buf;
+        pathLen = sizeof(int) * SERIAL_INT_FIELDS + sizeof(double);
+        pathLen +=  (SCION_ISD_AD_LEN + SCION_IFID_LEN) * stats->ifCounts[i];
+        if (pathLen + offset > len) {
+            free(stats);
+            return NULL;
+        }
+        *(int *)ptr = stats->receivedPackets[i];
+        ptr += sizeof(int);
+        *(int *)ptr = stats->sentPackets[i];
+        ptr += sizeof(int);
+        *(int *)ptr = stats->ackedPackets[i];
+        ptr += sizeof(int);
+        *(int *)ptr = stats->rtts[i];
+        ptr += sizeof(int);
+        *(double *)ptr = stats->lossRates[i];
+        ptr += sizeof(double);
+        *(int *)ptr = stats->ifCounts[i];
+        ptr += sizeof(int);
+        for (int j = 0; j < stats->ifCounts[i]; j++) {
+            SCIONInterface sif = stats->ifLists[i][j];
+            /* Python ISD_AD class expects network byte order */
+            *(uint32_t *)ptr = htonl(ISD_AD(sif.isd, sif.ad));
+            ptr += 4;
+            *(uint16_t *)ptr = sif.interface;
+            ptr += 2;
+        }
     }
-    return NULL;
+    free(stats);
+    return (void *)(ptr - (uint8_t *)buf);
 }
 
 bool SCIONSocket::readyToRead()

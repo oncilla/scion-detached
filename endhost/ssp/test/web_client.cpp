@@ -1,10 +1,7 @@
-#include <stdlib.h>
 #include <arpa/inet.h>
-#include <string.h>
-#include <stdio.h>
-#include "SCIONSocket.h"
-#include "SHA1.h"
 #include <curl/curl.h>
+
+#include "SCIONSocket.h"
 
 #define BUFSIZE 1024
 #define PATHS 3
@@ -64,7 +61,7 @@ int main(int argc, char **argv)
         if (us > 1000000) {
             count++;
             start = end;
-            stats = s.getStats();
+            stats = (SCIONStats *)s.getStats(NULL, 0);
             sprintf(curldata, "{\
                     \"packets\":{\
                     \"red\":[{\"time\":%d,\"value\":%.1f}],\

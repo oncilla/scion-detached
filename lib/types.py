@@ -138,3 +138,11 @@ class RouterFlag(TypeBase):
     ERROR = 0
     NO_PROCESS = 1
     FORWARD = 2
+
+
+############################
+# SIBRA types
+############################
+class SIBRAPathType(TypeBase):
+    STEADY = 0
+    EPHEMERAL = 1

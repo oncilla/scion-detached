@@ -1,9 +1,3 @@
-#include <errno.h>
-#include <pthread.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <sys/select.h>
-
 #include "SCIONSocket.h"
 #include "SCIONWrapper.h"
 #include "uthash.h"
@@ -103,12 +97,12 @@ int SCIONRecv(int sock, uint8_t *buf, size_t len,
     return e->sock->recv(buf, len, srcAddr);
 }
 
-SCIONStats * SCIONGetStats(int sock)
+void * SCIONGetStats(int sock, void *buf, int len)
 {
     SocketEntry *e = findSocket(sock);
     if (!e)
         return NULL;
-    return e->sock->getStats();
+    return e->sock->getStats(buf, len);
 }
 
 void SCIONDestroyStats(void *stats)
