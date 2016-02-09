@@ -21,10 +21,14 @@ import logging
 import threading
 
 # External packages
+import struct
 from Crypto.Hash import SHA256
 
 # SCION
 from infrastructure.scion_elem import SCIONElement
+from lib.crypto.asymcrypto import encrypt_session_key, sign
+from lib.crypto.certificate import Certificate, CertificateChain
+from lib.crypto.symcrypto import compute_session_key
 from lib.defines import CERTIFICATE_SERVICE, SCION_UDP_PORT
 from lib.errors import SCIONParseError
 from lib.log import log_exception
@@ -46,6 +50,7 @@ from lib.types import CertMgmtType, DRKeyType as DRKT, PayloadClass
 from lib.util import (
     SCIONTime,
     sleep_interval,
+
 )
 from lib.zookeeper import ZkNoConnection, ZkSharedCache, Zookeeper
 
@@ -73,6 +78,10 @@ class CertServer(SCIONElement):
         self.trc_requests = RequestHandler.start(
             "TRC Requests", self._check_trc, self._fetch_trc, self._reply_trc,
         )
+
+        self.drkey_requests = RequestHandler.start(
+            "DRKey Requests", self._check_drkey, self._fetch_drkey, self._reply_drkey,
+        )  # TODO(rsd) replace by simple thread
 
         self.PLD_CLASS_MAP = {
             PayloadClass.CERT: {
@@ -190,10 +199,51 @@ class CertServer(SCIONElement):
         Process a certificate chain request.
 
         :param pkt: DRKey request packet.
-        :type pkt: DRKeyRequestKey
+        :type pkt: # DRKeyRequestKey
         """
-        payload = pkt.get_payload()
-        assert isinstance(payload, DRKeyRequestKey)
+        drkey_request = pkt.get_payload()
+        hop = drkey_request.hop
+        assert isinstance(drkey_request, DRKeyRequestKey)
+        self.drkey_requests.put(
+            ((drkey_request.session_id, drkey_request.public_key), (pkt.addrs.src_addr, pkt.l4_hdr.src_port, hop))
+        )
+
+    def _check_drkey(self, key):
+        return True
+
+    def _fetch_drkey(self, key, _):
+        return
+
+    def _reply_drkey(self, key, info):
+        """
+        :param key:
+        :type key: (bytes, bytes)
+        :param info:
+        :return:
+        """
+
+        session_id, public_key = key
+        src, port, hop = info
+
+        SECRET_VALUE = bytes(16)  # TODO(rsd) replace by useful secret value
+
+        private_key = self.config.master_ad_key
+        session_key = compute_session_key(SECRET_VALUE, session_id)
+        enc_session_key = encrypt_session_key(private_key, public_key, session_key)
+
+        packed = []
+        packed.append(enc_session_key)
+        packed.append(session_id)
+        msg = b"".join(packed)
+
+        signature = sign(msg, private_key)
+
+        drkey_reply = DRKeyReplyKey.from_values(hop, enc_session_key, signature,
+                                                self.trust_store.get_cert(self.addr.get_isd_ad())
+                                                )
+
+        pkt = self._build_packet(src.host_addr, dst_isd=src.isd_id, dst_ad=src.ad_id, payload=drkey_reply, dst_port=port)
+        self.send(pkt, src.host_addr, port)
 
     def process_cert_chain_request(self, pkt):
         """

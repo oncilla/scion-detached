@@ -17,6 +17,9 @@
 """
 # External
 from nacl.exceptions import BadSignatureError
+from nacl.encoding import Base64Encoder
+from nacl.utils import random as rand_nonce
+from nacl.public import Box, PrivateKey, PublicKey
 from nacl.signing import SigningKey, VerifyKey
 
 
@@ -64,3 +67,41 @@ def verify(msg, sig, verifying_key):
         return msg == VerifyKey(verifying_key).verify(msg, sig)
     except BadSignatureError:
         return False
+
+
+def encrypt_session_key(private_key, public_key, msg):
+    """
+
+    :param private_key:
+    :type private_key: bytes
+    :param public_key:
+    :type public_key: bytes
+    :param msg:
+    :type msg: bytes
+    :return:
+    """
+
+    sk = PrivateKey(private_key)
+    pk = PublicKey(public_key)
+    box = Box(sk, pk)
+    nonce = rand_nonce(Box.NONCE_SIZE)
+    encrypted = box.encrypt(msg, nonce)
+    return encrypted
+
+
+def decrypt_session_key(private_key, public_key, cypher):
+    """
+
+    :param private_key:
+    :type private_key: bytes
+    :param public_key:
+    :type public_key: bytes
+    :param cypher:
+    :type cypher: bytes
+    :return:
+    """
+    sk = PrivateKey(private_key)
+    pk = PublicKey(public_key)
+    box = Box(sk, pk)
+    encrypted = box.decrypt(cypher)
+    return encrypted

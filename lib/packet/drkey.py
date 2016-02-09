@@ -21,12 +21,14 @@ Contains all the packet formats used for path management.
 import struct
 from collections import defaultdict
 
+# Crypto
+from nacl.public import PublicKey
+
 # SCION
 from lib.crypto.certificate import CertificateChain
 from lib.types import DRKeyType as DRKT
 from lib.errors import SCIONParseError
 from lib.packet.packet_base import DRKeyPayloadBase
-from lib.packet.scion_addr import ISD_AD
 from lib.util import Raw
 
 
@@ -64,44 +66,47 @@ class DRKeyRequestKey(DRKeyPayloadBase):
         data = Raw(raw, self.NAME, len(raw))
         self.hop = data.pop(1)
         self.session_id = data.pop(DRKeyConstants.SESSION_ID_BYTE_LENGTH)
-        self.cc_length = int.from_bytes(data.pop(4), byteorder='big', signed=False)
-        self.certificate_chain = CertificateChain.parse(data.pop(self.cc_length))
+        self.public_key_length = data.pop(1)
+        self.public_key = data.pop(self.public_key_length)
+        # self.cc_length = int.from_bytes(data.pop(4), byteorder='big', signed=False)
+        # self.certificate_chain = CertificateChain.parse(data.pop(self.cc_length))
 
     @classmethod
-    def from_values(cls, hop, session_id, certificate_chain):
+    def from_values(cls, hop, session_id, public_key):
         """
         Returns DRKeyRequestKey with fields populated from values.
         :param hop: hop on path the packet is addressed to
         :type: int
         :param session_id: session id
         :type session_id: bytes
-        :param certificate_chain: public key
-        :type certificate_chain: bytes
+        :param public_key: public key
+        :type public_key: bytes
         """
         inst = cls()
         inst.hop = hop
         inst.session_id = session_id
-        inst.certificate_chain = certificate_chain
+        inst.public_key = public_key
+        # inst.certificate_chain = certificate_chain
         return inst
 
     def pack(self):
         packed = []
         packed.append(struct.pack("!B", self.hop))
         packed.append(self.session_id)
-        certificate_chain = self.certificate_chain.pack()
-        self.cc_length = len(certificate_chain)
-        packed.append(struct.pack("!I", self.cc_length))
-        packed.append(certificate_chain)
+        packed.append(struct.pack("!B", len(self.public_key)))
+        packed.append(self.public_key)
+        # certificate_chain = self.certificate_chain.pack()
+        # self.cc_length = len(certificate_chain)
+        # packed.append(struct.pack("!I", self.cc_length))
+        # packed.append(certificate_chain)
         return b"".join(packed)
 
     def __len__(self):  # pragma: no cover
-        if not self.cc_length:
-            self.cc_length = len(self.certificate_chain.pack())
-        return 1 + DRKeyConstants.SESSION_ID_BYTE_LENGTH + 4 + self.cc_length
+        return 1 + DRKeyConstants.SESSION_ID_BYTE_LENGTH + 1 + len(self.public_key)  # 4 + self.cc_length
 
     def __str__(self):
-        return "[%s(%dB): hop:%d SessionID: %s CertChain: %s]" % (
-            self.NAME, len(self), self.hop, str(self.session_id), str(self.certificate_chain)
+        return "[%s(%dB): hop:%d SessionID: %s PublicKey: %s]" % (
+            self.NAME, len(self), self.hop, str(self.session_id), str(self.public_key)
         )
 
 
