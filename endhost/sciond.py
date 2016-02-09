@@ -27,6 +27,7 @@ from lib.crypto.hash_chain import HashChain
 from lib.defines import PATH_SERVICE, SCION_UDP_PORT
 from lib.errors import SCIONServiceLookupError
 from lib.log import log_exception
+from lib.packet.drkey import DRKeyRequestKey
 from lib.packet.host_addr import haddr_parse
 from lib.packet.path import EmptyPath, PathCombinator
 from lib.packet.path_mgmt import PathSegmentInfo
@@ -37,6 +38,7 @@ from lib.socket import UDPSocket
 from lib.thread import thread_safety_net
 from lib.types import (
     AddrType,
+    DRKeyType as DRKT,
     PathMgmtType as PMT,
     PathSegmentType as PST,
     PayloadClass,
@@ -86,6 +88,8 @@ class SCIONDaemon(SCIONElement):
             PayloadClass.PATH: {
                 PMT.REPLY: self.handle_path_reply,
                 PMT.REVOCATION: self.handle_revocation,
+                DRKT.ACKNOWLEDGE_KEYS: self.handle_drkey_ack,
+                DRKT.REPLY_KEY: self.handle_drkey_reply,
             }
         }
         if run_local_api:
@@ -463,3 +467,33 @@ class SCIONDaemon(SCIONElement):
             else:
                 missing.append((src_core_ad, dst_core_ad))
         return core_segs, missing
+
+    def get_drkeys(self, dst_addrs, dst_isd, dst_ad, requester=None):
+        """
+
+        :param dst_addrs:
+        :param dst_isd:
+        :param dst_ad:
+        :param requester:
+        :return:
+        """
+
+        paths = self.get_paths(dst_isd, dst_ad, requester)
+
+        if not paths:
+            logging.error("No path found %s. Cannot resolve DRKeys", (dst_isd, dst_ad))
+            return
+
+        path = paths[0]  # TODO(rsd) better path choosing. e.g. DRKey available
+
+        req = DRKeyRequestKey
+        for hop in path.get_ad_hops():
+            hop
+
+
+
+    def handle_drkey_ack(pkt):
+        return
+
+    def handle_drkey_reply(self, pkt):
+        return 
