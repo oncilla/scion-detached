@@ -22,16 +22,18 @@ import threading
 from itertools import product
 
 # SCION
+from nacl.public import PrivateKey
+
 from infrastructure.scion_elem import SCIONElement
 from lib.crypto.hash_chain import HashChain
 from lib.defines import PATH_SERVICE, SCION_UDP_PORT
 from lib.errors import SCIONServiceLookupError
 from lib.log import log_exception
 from lib.packet.drkey import DRKeyRequestKey
-from lib.packet.host_addr import haddr_parse
+from lib.packet.host_addr import haddr_parse, HostAddrIPv4
 from lib.packet.path import EmptyPath, PathCombinator
 from lib.packet.path_mgmt import PathSegmentInfo
-from lib.packet.scion_addr import ISD_AD
+from lib.packet.scion_addr import ISD_AD, SCIONAddr
 from lib.path_db import PathSegmentDB
 from lib.requests import RequestHandler
 from lib.socket import UDPSocket
@@ -88,8 +90,12 @@ class SCIONDaemon(SCIONElement):
             PayloadClass.PATH: {
                 PMT.REPLY: self.handle_path_reply,
                 PMT.REVOCATION: self.handle_revocation,
+            },
+            PayloadClass.DRKEY: {
                 DRKT.ACKNOWLEDGE_KEYS: self.handle_drkey_ack,
                 DRKT.REPLY_KEY: self.handle_drkey_reply,
+                DRKT.REQUEST_KEY: self.handle_drkey_request,
+                DRKT.SEND_KEYS: self.handle_drkey_send,
             }
         }
         if run_local_api:
@@ -240,9 +246,9 @@ class SCIONDaemon(SCIONElement):
         rev_info = pkt.get_payload()
         logging.info("Received revocation:\n%s", str(rev_info))
         # Verify revocation.
-#         if not HashChain.verify(rev_info.proof, rev_info.rev_token):
-#             logging.info("Revocation verification failed.")
-#             return
+        #         if not HashChain.verify(rev_info.proof, rev_info.rev_token):
+        #             logging.info("Revocation verification failed.")
+        #             return
         # Go through all segment databases and remove affected segments.
         deletions = self._remove_revoked_pcbs(self.up_segments,
                                               rev_info.rev_token)
@@ -468,32 +474,45 @@ class SCIONDaemon(SCIONElement):
                 missing.append((src_core_ad, dst_core_ad))
         return core_segs, missing
 
-    def get_drkeys(self, dst_addrs, dst_isd, dst_ad, requester=None):
+    def get_drkeys(self, src, dst, path, requester=None):
         """
 
-        :param dst_addrs:
-        :param dst_isd:
-        :param dst_ad:
+        :param src:
+        :type src: SCIONAddr
+        :param dst:
+        :type dst: SCIONAddr
         :param requester:
         :return:
         """
 
-        paths = self.get_paths(dst_isd, dst_ad, requester)
+        logging.debug("Get DRKeys between. src: %s dst:%s", str(src), str(dst))
 
-        if not paths:
-            logging.error("No path found %s. Cannot resolve DRKeys", (dst_isd, dst_ad))
-            return
+        assert isinstance(dst.host_addr, HostAddrIPv4)
 
-        path = paths[0]  # TODO(rsd) better path choosing. e.g. DRKey available
+        logging.debug("Path: %s", str(path))
 
-        req = DRKeyRequestKey
-        for hop in path.get_ad_hops():
-            hop
+        private_key = PrivateKey.generate()
+        public_key = private_key.public_key
+        session_id = bytes([0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x01])  # TODO(rsd) replace
+
+        for hop in range(path.get_ad_hops()):
+            req = DRKeyRequestKey.from_values(hop, session_id, public_key.encode())
+            pkt = self._build_packet(dst_host=dst.host_addr, dst_isd=dst.isd_id, dst_ad=dst.ad_id, path=path, payload=req)
+            self.send(pkt, str(dst.host_addr))
 
 
-
-    def handle_drkey_ack(pkt):
+    def handle_drkey_ack(self, pkt):
+        logging.debug("Handle DRKey ack")
         return
 
     def handle_drkey_reply(self, pkt):
-        return 
+        logging.debug("Handle DRKey reply")
+        return
+
+    def handle_drkey_send(self, pkt):
+        logging.debug("Handle DRKey send")
+        return
+
+    def handle_drkey_request(self, pkt):
+        logging.debug("Handle DRKey request %s ", str(self.addr.ad_id))
+        return

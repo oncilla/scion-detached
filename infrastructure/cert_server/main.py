@@ -202,6 +202,7 @@ class CertServer(SCIONElement):
         :type pkt: # DRKeyRequestKey
         """
         drkey_request = pkt.get_payload()
+        logging.debug("Processing DRKEY request: %s", str(drkey_request))
         hop = drkey_request.hop
         assert isinstance(drkey_request, DRKeyRequestKey)
         self.drkey_requests.put(
@@ -244,6 +245,7 @@ class CertServer(SCIONElement):
 
         pkt = self._build_packet(src.host_addr, dst_isd=src.isd_id, dst_ad=src.ad_id, payload=drkey_reply, dst_port=port)
         self.send(pkt, src.host_addr, port)
+        logging.debug("Replied DRKey request with %s", str(drkey_reply))
 
     def process_cert_chain_request(self, pkt):
         """

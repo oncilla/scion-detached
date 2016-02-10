@@ -119,6 +119,7 @@ class Ping(object):
         self.sd = SCIONDaemon.start(
             conf_dir, self.src.host_addr, run_local_api=True, port=0)
         self.get_path()
+        self.sd.get_drkeys(self.src, self.dst, self.path)
         self.sock = UDPSocket(bind=(str(self.src.host_addr), 0, "Ping App"),
                               addr_type=AddrType.IPV4)
 
@@ -223,13 +224,14 @@ class TestSCIONDaemon(unittest.TestCase):
         every AD from `sources`, and receiver is from every AD from
         `destinations`.
         """
+
         thread = threading.current_thread()
         thread.name = "E2E.MainThread"
         client_ip = haddr_parse_interface(client)
         server_ip = haddr_parse_interface(server)
         failures = 0
-        for src_id in sources:
-            for dst_id in destinations:
+        for src_id in [sources[0]]:
+            for dst_id in [destinations[0]]:
                 logging.info("Testing: %s -> %s", src_id, dst_id)
                 src = SCIONAddr.from_values(src_id[0], src_id[1], client_ip)
                 dst = SCIONAddr.from_values(dst_id[0], dst_id[1], server_ip)

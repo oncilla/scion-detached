@@ -356,13 +356,14 @@ class Router(SCIONElement):
         """
         payload = drkey_pkt.get_payload()
 
+        logging.debug("Processing DRKey packet")
         if payload.PAYLOAD_TYPE == DRKT.REQUEST_KEY:
             # handle state update
             logging.debug("Received DRKey Request:\n%s",
                           str(drkey_pkt.get_payload()))
             self.relay_cert_server_packet(drkey_pkt, from_local_ad)
         if not from_local_ad and drkey_pkt.path.is_last_path_hof():
-            self.deliver(drkey_pkt, PT.PATH_MGMT)
+            self.deliver(drkey_pkt, PT.DATA)
         else:
             self.forward_packet(drkey_pkt, from_local_ad)
 
