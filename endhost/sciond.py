@@ -36,6 +36,7 @@ from lib.packet.path_mgmt import PathSegmentInfo
 from lib.packet.scion_addr import ISD_AD, SCIONAddr
 from lib.path_db import PathSegmentDB
 from lib.requests import RequestHandler
+from lib.packet.scion import PacketType as PT
 from lib.socket import UDPSocket
 from lib.thread import thread_safety_net
 from lib.types import (
@@ -481,6 +482,8 @@ class SCIONDaemon(SCIONElement):
         :type src: SCIONAddr
         :param dst:
         :type dst: SCIONAddr
+        :param path:
+        :type path: Path
         :param requester:
         :return:
         """
@@ -496,6 +499,13 @@ class SCIONDaemon(SCIONElement):
         session_id = bytes([0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x01])  # TODO(rsd) replace
 
         for hop in range(path.get_ad_hops()):
+
+            isd_ad = path.interfaces[hop][0]
+            isd_ad.isd.id
+
+            pkt = self._build_packet(
+            PT.CERT_MGMT , dst_isd=path,
+            dst_ad=pcb.get_first_pcbm().ad_id, path=core_path, payload=records)
             req = DRKeyRequestKey.from_values(hop, session_id, public_key.encode())
             pkt = self._build_packet(dst_host=dst.host_addr, dst_isd=dst.isd_id, dst_ad=dst.ad_id, path=path, payload=req)
             self.send(pkt, str(dst.host_addr))
