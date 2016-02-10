@@ -148,8 +148,8 @@ class Ping(object):
         assert next_hop is not None
         assert next_hop == self.hop
 
-        logging.info("Sending packet: \n%s\nFirst hop: %s:%s",
-                     spkt, next_hop, port)
+        # logging.info("Sending packet: \n%s\nFirst hop: %s:%s",
+        #              spkt, next_hop, port)
         if self.iflist:
             logging.info("Interfaces:")
             for (isd_ad, ifid) in self.iflist:

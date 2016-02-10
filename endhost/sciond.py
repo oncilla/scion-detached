@@ -483,10 +483,12 @@ class SCIONDaemon(SCIONElement):
         :param dst:
         :type dst: SCIONAddr
         :param path:
-        :type path: Path
+        :type path: PathBase
         :param requester:
         :return:
         """
+
+        path = self.get_paths(dst.isd_id,dst.ad_id,requester)[0]
 
         logging.debug("Get DRKeys between. src: %s dst:%s", str(src), str(dst))
 
@@ -498,17 +500,24 @@ class SCIONDaemon(SCIONElement):
         public_key = private_key.public_key
         session_id = bytes([0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x01])  # TODO(rsd) replace
 
+        logging.debug("DRKey Path: %s", str(path))
+
+
         for hop in range(path.get_ad_hops()):
-
             isd_ad = path.interfaces[hop][0]
-            isd_ad.isd.id
+            logging.debug("ISD: %d AD: %d", isd_ad.isd, isd_ad.ad)
 
-            pkt = self._build_packet(
-            PT.CERT_MGMT , dst_isd=path,
-            dst_ad=pcb.get_first_pcbm().ad_id, path=core_path, payload=records)
+        for hop in range(path.get_ad_hops()):
+            isd_ad = path.interfaces[hop][0]
+
+            # pkt = self._build_packet(
+            # PT.CERT_MGMT , dst_isd=path,
+            # dst_ad=pcb.get_first_pcbm().ad_id, path=core_path, payload=records)
             req = DRKeyRequestKey.from_values(hop, session_id, public_key.encode())
-            pkt = self._build_packet(dst_host=dst.host_addr, dst_isd=dst.isd_id, dst_ad=dst.ad_id, path=path, payload=req)
-            self.send(pkt, str(dst.host_addr))
+            # pkt = self._build_packet(dst_host=dst.host_addr, dst_isd=dst.isd_id, dst_ad=dst.ad_id, path=path, payload=req)
+            pkt = self._build_packet(PT.CERT_MGMT, path=path, dst_isd=isd_ad.isd, dst_ad=isd_ad.ad, payload=req)
+            logging.info("Sending packet: \n%s\nFirst hop: %s", pkt, path.get_fwd_if())
+            self._send_to_next_hop(pkt, path.get_fwd_if())
 
 
     def handle_drkey_ack(self, pkt):
@@ -526,3 +535,17 @@ class SCIONDaemon(SCIONElement):
     def handle_drkey_request(self, pkt):
         logging.debug("Handle DRKey request %s ", str(self.addr.ad_id))
         return
+
+    def _send_to_next_hop(self, pkt, if_id):
+        """
+        Sends the packet to the next hop of the given if_id.
+        :param if_id: The interface ID of the corresponding interface.
+        :type if_id: int.
+        """
+        if if_id not in self.ifid2addr:
+            logging.error("Interface ID %d not found in ifid2addr.", if_id)
+            return
+        next_hop = self.ifid2addr[if_id]
+        logging.debug("Next hop: %s", next_hop)
+        self.send(pkt, next_hop)
+

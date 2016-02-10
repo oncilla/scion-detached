@@ -362,10 +362,10 @@ class Router(SCIONElement):
             logging.debug("Received DRKey Request:\n%s",
                           str(drkey_pkt.get_payload()))
             self.relay_cert_server_packet(drkey_pkt, from_local_ad)
-        if not from_local_ad and drkey_pkt.path.is_last_path_hof():
-            self.deliver(drkey_pkt, PT.DATA)
-        else:
-            self.forward_packet(drkey_pkt, from_local_ad)
+        # if not from_local_ad and drkey_pkt.path.is_last_path_hof():
+        #     self.deliver(drkey_pkt, PT.DATA)
+        # else:
+        #     self.forward_packet(drkey_pkt, from_local_ad)
 
     def process_path_mgmt_packet(self, mgmt_pkt, from_local_ad):
         """
@@ -775,6 +775,7 @@ class Router(SCIONElement):
             log_exception("Error parsing packet: %s" % packet,
                           level=logging.ERROR)
             return
+
         if pkt.ext_hdrs:
             logging.debug("Got packet (from_local_ad? %s):\n%s",
                           from_local_ad, pkt)

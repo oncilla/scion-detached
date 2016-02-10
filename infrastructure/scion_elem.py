@@ -156,7 +156,7 @@ class SCIONElement(object):
     def _get_handler(self, pkt):
         pld = pkt.get_payload()
         if pld.PAYLOAD_CLASS == PayloadClass.DRKEY:
-            logging.debug("Handling payload: %s gugus", PayloadClass.to_str(pld.PAYLOAD_CLASS))
+            logging.critical("Handling payload: %s gugus", PayloadClass.to_str(pld.PAYLOAD_CLASS))
         try:
             type_map = self.PLD_CLASS_MAP[pld.PAYLOAD_CLASS]
         except KeyError:
