@@ -28,6 +28,8 @@ import sys
 from Crypto.Hash import SHA256
 
 # SCION
+from nacl.public import PrivateKey
+
 from infrastructure.scion_elem import SCIONElement
 from lib.crypto.asymcrypto import encrypt_session_key, sign
 from lib.crypto.certificate import Certificate, CertificateChain
@@ -245,7 +247,7 @@ class CertServer(SCIONElement):
 
         signature = sign(msg, private_key)
         cert_chain = self.trust_store.get_cert(self.addr.get_isd_ad().isd, self.addr.get_isd_ad().ad)
-        logging.debug("%s", str(cert_chain))
+        # logging.debug("%s", str(cert_chain))
 
         drkey_reply = DRKeyReplyKey.from_values(hop, enc_session_key, signature, cert_chain)
 

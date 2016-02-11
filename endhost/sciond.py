@@ -23,6 +23,7 @@ import threading
 from itertools import product
 
 # SCION
+import time
 from nacl.public import PrivateKey
 
 from infrastructure.scion_elem import SCIONElement
@@ -109,9 +110,9 @@ class SCIONDaemon(SCIONElement):
                 addr_type=AddrType.IPV4)
             self._socks.add(self._api_sock)
 
-
-        self.private_key = PrivateKey.generate()
-        self.public_key = self.private_key.public_key
+        key_pair = PrivateKey.generate()
+        self.private_key = key_pair.encode()
+        self.public_key = key_pair.public_key.encode()
 
     @classmethod
     def start(cls, conf_dir, addr, api_addr=None, run_local_api=False,
@@ -511,15 +512,13 @@ class SCIONDaemon(SCIONElement):
 
         for hop in range(len(path.interfaces)):
             isd_ad = path.interfaces[hop][0]
-
-            # pkt = self._build_packet(
-            # PT.CERT_MGMT , dst_isd=path,
-            # dst_ad=pcb.get_first_pcbm().ad_id, path=core_path, payload=records)
-            req = DRKeyRequestKey.from_values(hop, session_id, self.public_key.encode())
-            # pkt = self._build_packet(dst_host=dst.host_addr, dst_isd=dst.isd_id, dst_ad=dst.ad_id, path=path, payload=req)
+            req = DRKeyRequestKey.from_values(hop, session_id, self.public_key)
             pkt = self._build_packet(PT.CERT_MGMT, path=path, dst_isd=isd_ad.isd, dst_ad=isd_ad.ad, payload=req)
             logging.info("Sending packet to %s:%s First hop: %s", isd_ad.isd, isd_ad.ad, path.get_fwd_if())
             self._send_to_next_hop(pkt, path.get_fwd_if())
+
+        for _ in range(5): # TODO(rsd) replace with barrier
+            time.sleep(.5)
 
 
     def handle_drkey_ack(self, pkt):
@@ -528,14 +527,15 @@ class SCIONDaemon(SCIONElement):
 
     def handle_drkey_reply(self, pkt):
 
+
         payload = pkt.get_payload()
         assert isinstance(payload, DRKeyReplyKey)
         cypher = payload.encrypted_session_key
-        certificate = payload.certificate_chain[0]
-        public_key = base64.b64decode(certificate.subject_enc_key)
-        clear = decrypt_session_key(self.private_key, public_key)
+        certificate = payload.certificate_chain.certs[0]
+        clear = decrypt_session_key(self.private_key, certificate.subject_enc_key, cypher)
 
-        logging.debug("Handle DRKey reply:\n Key[Hop:%d] = %s", payload.hop, clear)
+        logging.debug("Handle DRKey reply:\n Session Key[Hop:%d] = %s", payload.hop, clear)
+        self.DONE = True
         return
 
     def handle_drkey_send(self, pkt):

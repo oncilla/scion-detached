@@ -16,8 +16,9 @@
 =======================================================
 """
 # External
+import logging
+
 from nacl.exceptions import BadSignatureError
-from nacl.encoding import Base64Encoder
 from nacl.utils import random as rand_nonce
 from nacl.public import Box, PrivateKey, PublicKey
 from nacl.signing import SigningKey, VerifyKey
