@@ -80,7 +80,9 @@ class PayloadClass(TypeBase):
     IFID = 1
     CERT = 2
     PATH = 3
-    DRKEY = 4
+    SIBRA = 4
+    DRKEY = 5
+
 
 
 class CertMgmtType(TypeBase):
@@ -129,6 +131,9 @@ class DRKeyType(TypeBase):
     REPLY_KEY = 1
     SEND_KEYS = 2
     ACKNOWLEDGE_KEYS = 3
+
+class SIBRAPayloadType(TypeBase):
+    EMPTY = 0
 
 
 ############################
