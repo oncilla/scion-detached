@@ -23,6 +23,8 @@ import signal
 import threading
 
 # SCION
+import sys
+
 from lib.log import log_exception
 
 
@@ -47,5 +49,5 @@ def thread_safety_net(func, *args, **kwargs):
     try:
         return func(*args, **kwargs)
     except:
-        log_exception("Exception in %s thread:", name)
+        log_exception("Exception in %s thread: %s", name, sys.exc_info()[0])
         kill_self()

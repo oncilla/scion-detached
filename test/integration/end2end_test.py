@@ -295,10 +295,10 @@ def main():
         args.server = "169.254.0.3" if args.mininet else "127.0.0.3"
 
     ad_list = _load_ad_list()
-    srcs = _parse_tuple(args.src_ad, ad_list)
-    dsts = _parse_tuple(args.dst_ad, ad_list)
+    # srcs = _parse_tuple(args.src_ad, ad_list)
+    # dsts = _parse_tuple(args.dst_ad, ad_list)
 
-    TestSCIONDaemon().test(args.client, args.server, srcs, dsts)
+    TestSCIONDaemon().test(args.client, args.server, [(1, 17)], [(2, 25)])
 
 
 if __name__ == "__main__":

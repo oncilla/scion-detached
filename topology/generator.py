@@ -40,7 +40,7 @@ from lib.config import Config
 from lib.crypto.asymcrypto import (
     generate_sign_keypair,
     sign,
-)
+    generate_enc_pub_key)
 from lib.crypto.certificate import Certificate, CertificateChain, TRC
 from lib.defines import (
     AD_CONF_FILE,
@@ -264,7 +264,7 @@ class CertGenerator(object):
         topo_id = TopoID.from_values(0, 0)
         self.sig_pub_keys[topo_id], self.sig_priv_keys[topo_id] = \
             generate_sign_keypair()
-        self.enc_pub_keys[topo_id], _ = generate_sign_keypair()
+        self.enc_pub_keys[topo_id] = generate_enc_pub_key(self.sig_priv_keys[topo_id])
 
     def _iterate(self, f):
         for isd_ad_id, ad_conf in self.topo_config["ADs"].items():
@@ -272,7 +272,7 @@ class CertGenerator(object):
 
     def _gen_ad_keys(self, topo_id, ad_conf):
         sig_pub, sig_priv = generate_sign_keypair()
-        enc_pub, enc_priv = generate_sign_keypair()
+        enc_pub = generate_enc_pub_key(sig_priv)
         self.sig_priv_keys[topo_id] = sig_priv
         self.sig_pub_keys[topo_id] = sig_pub
         self.enc_pub_keys[topo_id] = enc_pub

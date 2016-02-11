@@ -342,27 +342,23 @@ class Router(SCIONElement):
             port = SCION_UDP_PORT
         self.send(spkt, addr, port)
 
-    def process_drkey_packet(self, drkey_pkt, from_local_ad):
+    def process_drkey_packet(self, drkey_pkt, _):
         """
         Process path management packets.
 
         :param mgmt_pkt: The path mgmt packet.
         :type mgmt_pkt: :class:`lib.packet.path_mgmt.PathMgmtPacket`
-        :param from_local_ad: whether or not the packet is from the local AD.
-        :type from_local_ad: bool
         """
         payload = drkey_pkt.get_payload()
 
-        logging.debug("Processing DRKey packet")
+        logging.critical("Processing DRKey packet - router")
         if payload.PAYLOAD_TYPE == DRKT.REQUEST_KEY:
             # handle state update
-            logging.debug("Received DRKey Request:\n%s",
+            logging.critical("Received DRKey Request - router:\n%s",
                           str(drkey_pkt.get_payload()))
-            self.relay_cert_server_packet(drkey_pkt, from_local_ad)
-        # if not from_local_ad and drkey_pkt.path.is_last_path_hof():
-        #     self.deliver(drkey_pkt, PT.DATA)
-        # else:
-        #     self.forward_packet(drkey_pkt, from_local_ad)
+            self.relay_cert_server_packet(drkey_pkt, False)
+        else:
+            self.forward_packet(drkey_pkt, from_local_ad)
 
     def fwd_sibra_service_pkt(self, spkt, _):
         """

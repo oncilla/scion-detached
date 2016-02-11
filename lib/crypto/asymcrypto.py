@@ -33,6 +33,14 @@ def generate_sign_keypair():
     sk = SigningKey.generate()
     return sk.verify_key.encode(), sk.encode()
 
+def generate_enc_pub_key(private_key):
+    """
+
+    :param private_key:
+    :type private_key: bytes
+    :return:
+    """
+    return PrivateKey(private_key).public_key.encode()
 
 def sign(msg, signing_key):
     """

@@ -16,6 +16,7 @@
 ================================================
 """
 # Stdlib
+import base64
 import logging
 import struct
 import threading
@@ -25,11 +26,13 @@ from itertools import product
 from nacl.public import PrivateKey
 
 from infrastructure.scion_elem import SCIONElement
+from lib.crypto.asymcrypto import decrypt_session_key
+from lib.crypto.certificate import Certificate
 from lib.crypto.hash_chain import HashChain
 from lib.defines import PATH_SERVICE, SCION_UDP_PORT
 from lib.errors import SCIONServiceLookupError
 from lib.log import log_exception
-from lib.packet.drkey import DRKeyRequestKey
+from lib.packet.drkey import DRKeyRequestKey, DRKeyReplyKey, DRKeyAcknowledgeKeys, DRKeySendKeys
 from lib.packet.host_addr import haddr_parse, HostAddrIPv4
 from lib.packet.path import EmptyPath, PathCombinator
 from lib.packet.path_mgmt import PathSegmentInfo
@@ -105,6 +108,10 @@ class SCIONDaemon(SCIONElement):
                 bind=(api_addr, SCIOND_API_PORT, "sciond local API"),
                 addr_type=AddrType.IPV4)
             self._socks.add(self._api_sock)
+
+
+        self.private_key = PrivateKey.generate()
+        self.public_key = self.private_key.public_key
 
     @classmethod
     def start(cls, conf_dir, addr, api_addr=None, run_local_api=False,
@@ -490,50 +497,53 @@ class SCIONDaemon(SCIONElement):
 
         path = self.get_paths(dst.isd_id,dst.ad_id,requester)[0]
 
-        logging.debug("Get DRKeys between. src: %s dst:%s", str(src), str(dst))
-
         assert isinstance(dst.host_addr, HostAddrIPv4)
 
-        logging.debug("Path: %s", str(path))
-
-        private_key = PrivateKey.generate()
-        public_key = private_key.public_key
         session_id = bytes([0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x01])  # TODO(rsd) replace
 
-        logging.debug("DRKey Path: %s", str(path))
+        logging.debug("DRKey Path: %s, %d hops", str(path), len(path.interfaces))
 
-
-        for hop in range(path.get_ad_hops()):
+        s = ""
+        for hop in range(len(path.interfaces)):
             isd_ad = path.interfaces[hop][0]
-            logging.debug("ISD: %d AD: %d", isd_ad.isd, isd_ad.ad)
+            s += "ISD: %d AD: %d\n" % (isd_ad.isd, isd_ad.ad)
+        logging.debug(s)
 
-        for hop in range(path.get_ad_hops()):
+        for hop in range(len(path.interfaces)):
             isd_ad = path.interfaces[hop][0]
 
             # pkt = self._build_packet(
             # PT.CERT_MGMT , dst_isd=path,
             # dst_ad=pcb.get_first_pcbm().ad_id, path=core_path, payload=records)
-            req = DRKeyRequestKey.from_values(hop, session_id, public_key.encode())
+            req = DRKeyRequestKey.from_values(hop, session_id, self.public_key.encode())
             # pkt = self._build_packet(dst_host=dst.host_addr, dst_isd=dst.isd_id, dst_ad=dst.ad_id, path=path, payload=req)
             pkt = self._build_packet(PT.CERT_MGMT, path=path, dst_isd=isd_ad.isd, dst_ad=isd_ad.ad, payload=req)
-            logging.info("Sending packet: \n%s\nFirst hop: %s", pkt, path.get_fwd_if())
+            logging.info("Sending packet to %s:%s First hop: %s", isd_ad.isd, isd_ad.ad, path.get_fwd_if())
             self._send_to_next_hop(pkt, path.get_fwd_if())
 
 
     def handle_drkey_ack(self, pkt):
-        logging.debug("Handle DRKey ack")
+        logging.debug("Handle DRKey ack %s", pkt.get_payload())
         return
 
     def handle_drkey_reply(self, pkt):
-        logging.debug("Handle DRKey reply")
+
+        payload = pkt.get_payload()
+        assert isinstance(payload, DRKeyReplyKey)
+        cypher = payload.encrypted_session_key
+        certificate = payload.certificate_chain[0]
+        public_key = base64.b64decode(certificate.subject_enc_key)
+        clear = decrypt_session_key(self.private_key, public_key)
+
+        logging.debug("Handle DRKey reply:\n Key[Hop:%d] = %s", payload.hop, clear)
         return
 
     def handle_drkey_send(self, pkt):
-        logging.debug("Handle DRKey send")
+        logging.debug("Handle DRKey send %s", pkt.get_payload())
         return
 
     def handle_drkey_request(self, pkt):
-        logging.debug("Handle DRKey request %s ", str(self.addr.ad_id))
+        logging.debug("Handle DRKey request %s ", pkt.get_payload())
         return
 
     def _send_to_next_hop(self, pkt, if_id):

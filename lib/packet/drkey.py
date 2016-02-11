@@ -69,7 +69,7 @@ class DRKeyRequestKey(DRKeyPayloadBase):
         self.public_key_length = data.pop(1)
         self.public_key = data.pop(self.public_key_length)
         # self.cc_length = int.from_bytes(data.pop(4), byteorder='big', signed=False)
-        # self.certificate_chain = CertificateChain.parse(data.pop(self.cc_length))
+        # self.certificate_chain = CertificateChain.parse(data.pop(self.cc_length).decode("UTF-8"))
 
     @classmethod
     def from_values(cls, hop, session_id, public_key):
@@ -146,7 +146,7 @@ class DRKeyReplyKey(DRKeyPayloadBase):
         self.sign_length = int.from_bytes(data.pop(2), byteorder='big', signed=False)
         self.signature = data.pop(self.sign_length)
         self.cc_length = int.from_bytes(data.pop(4), byteorder='big', signed=False)
-        self.certificate_chain = CertificateChain.parse(data.pop(self.cc_length))
+        self.certificate_chain = CertificateChain(data.pop(self.cc_length).decode("UTF-8"))
 
     @classmethod
     def from_values(cls, hop, encrypted_session_key, signature, certificate_chain):
@@ -165,6 +165,7 @@ class DRKeyReplyKey(DRKeyPayloadBase):
         inst.hop = hop
         inst.signature = signature
         inst.encrypted_session_key = encrypted_session_key
+        inst.certificate_chain = certificate_chain
         return inst
 
     def pack(self):
@@ -228,7 +229,7 @@ class DRKeySendKeys(DRKeyPayloadBase):
         self.keys_blob_length = int.from_bytes(data.pop(2), byteorder='big', signed=False)
         self.keys_blob = data.pop(self.keys_blob_length)
         self.cc_length = int.from_bytes(data.pop(4), byteorder='big', signed=False)
-        self.certificate_chain = CertificateChain.parse(data.pop(self.cc_length))
+        self.certificate_chain = CertificateChain(data.pop(self.cc_length).decode("UTF-8"))
 
     @classmethod
     def from_values(cls, keys_blob, certificate_chain):
@@ -298,7 +299,7 @@ class DRKeyAcknowledgeKeys(DRKeyPayloadBase):
         self.sign_length = int.from_bytes(data.pop(2), byteorder='big', signed=False)
         self.signature = data.pop(self.keys_blob_length)
         self.cc_length = int.from_bytes(data.pop(4), byteorder='big', signed=False)
-        self.certificate_chain = CertificateChain.parse(data.pop(self.cc_length))
+        self.certificate_chain = CertificateChain(data.pop(self.cc_length).decode("UTF-8"))
 
     @classmethod
     def from_values(cls, signature, certificate_chain):

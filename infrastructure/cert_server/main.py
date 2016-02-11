@@ -17,11 +17,14 @@
 ========================================
 """
 # Stdlib
+import base64
 import logging
 import threading
 
 # External packages
 import struct
+
+import sys
 from Crypto.Hash import SHA256
 
 # SCION
@@ -43,7 +46,8 @@ from lib.packet.drkey import (
     DRKeyRequestKey,
     DRKeyReplyKey
 )
-from lib.packet.scion import PacketType as PT, SCIONL4Packet
+from lib.packet.scion import PacketType as PT, SCIONL4Packet, SCIONAddrHdr
+from lib.packet.scion_addr import SCIONAddr
 from lib.requests import RequestHandler
 from lib.thread import thread_safety_net
 from lib.types import CertMgmtType, DRKeyType as DRKT, PayloadClass
@@ -51,7 +55,7 @@ from lib.util import (
     SCIONTime,
     sleep_interval,
 
-)
+    read_file, get_sig_key_file_path)
 from lib.zookeeper import ZkNoConnection, ZkSharedCache, Zookeeper
 
 
@@ -94,6 +98,8 @@ class CertServer(SCIONElement):
                 DRKT.REQUEST_KEY: self.proccess_drkey_request,
             }
         }
+
+        self.ad_sig_key = base64.b64decode(read_file(get_sig_key_file_path(self.conf_dir)))
 
         if not is_sim:
             # Add more IPs here if we support dual-stack
@@ -202,11 +208,11 @@ class CertServer(SCIONElement):
         :type pkt: # DRKeyRequestKey
         """
         drkey_request = pkt.get_payload()
-        logging.debug("Processing DRKEY request: %s", str(drkey_request))
+        logging.debug("Processing DRKEY request - cert: %s", str(drkey_request))
         hop = drkey_request.hop
         assert isinstance(drkey_request, DRKeyRequestKey)
         self.drkey_requests.put(
-            ((drkey_request.session_id, drkey_request.public_key), (pkt.addrs.src_addr, pkt.l4_hdr.src_port, hop))
+            ((drkey_request.session_id, drkey_request.public_key), (pkt.addrs.get_src_addr(), pkt.l4_hdr.src_port, hop))
         )
 
     def _check_drkey(self, key):
@@ -219,16 +225,16 @@ class CertServer(SCIONElement):
         """
         :param key:
         :type key: (bytes, bytes)
-        :param info:
+        :param info: (SCIONAddr, int, int)
         :return:
         """
-
         session_id, public_key = key
         src, port, hop = info
+        assert isinstance(src, SCIONAddr)
 
         SECRET_VALUE = bytes(16)  # TODO(rsd) replace by useful secret value
 
-        private_key = self.config.master_ad_key
+        private_key = self.ad_sig_key
         session_key = compute_session_key(SECRET_VALUE, session_id)
         enc_session_key = encrypt_session_key(private_key, public_key, session_key)
 
@@ -238,14 +244,15 @@ class CertServer(SCIONElement):
         msg = b"".join(packed)
 
         signature = sign(msg, private_key)
+        cert_chain = self.trust_store.get_cert(self.addr.get_isd_ad().isd, self.addr.get_isd_ad().ad)
+        logging.debug("%s", str(cert_chain))
 
-        drkey_reply = DRKeyReplyKey.from_values(hop, enc_session_key, signature,
-                                                self.trust_store.get_cert(self.addr.get_isd_ad())
-                                                )
+        drkey_reply = DRKeyReplyKey.from_values(hop, enc_session_key, signature, cert_chain)
 
         pkt = self._build_packet(src.host_addr, dst_isd=src.isd_id, dst_ad=src.ad_id, payload=drkey_reply, dst_port=port)
         self.send(pkt, src.host_addr, port)
         logging.debug("Replied DRKey request with %s", str(drkey_reply))
+
 
     def process_cert_chain_request(self, pkt):
         """
