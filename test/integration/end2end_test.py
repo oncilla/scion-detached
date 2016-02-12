@@ -147,16 +147,8 @@ class Ping(object):
         spkt = SCIONL4Packet.from_values(
             cmn_hdr, addr_hdr, self.path, [], udp_hdr, payload)
         (next_hop, port) = self.sd.get_first_hop(spkt)
-        assert next_hop is not None
-        assert next_hop == self.hop
-
-        # logging.info("Sending packet: \n%s\nFirst hop: %s:%s",
-        #              spkt, next_hop, port)
-        if self.iflist:
-            logging.info("Interfaces:")
-            for (isd_ad, ifid) in self.iflist:
-                logging.info("(%d, %d):%d",
-                             isd_ad >> 20, isd_ad & 0xfffff, ifid)
+      #  assert next_hop is not None
+      #  assert next_hop == self.hop
         self.sd.send(spkt, next_hop, port)
 
     def recv(self):
