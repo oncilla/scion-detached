@@ -88,6 +88,7 @@ class RequestHandler(object):
 
     def run(self):
         while True:
+            logging.debug("running")
             key, req = self._queue.get()
             if req:
                 # Add a new request

@@ -249,7 +249,7 @@ class CertServer(SCIONElement):
         cert_chain = self.trust_store.get_cert(self.addr.get_isd_ad().isd, self.addr.get_isd_ad().ad)
         # logging.debug("%s", str(cert_chain))
 
-        drkey_reply = DRKeyReplyKey.from_values(hop, enc_session_key, signature, cert_chain)
+        drkey_reply = DRKeyReplyKey.from_values(hop, session_id, enc_session_key, signature, cert_chain)
 
         pkt = self._build_packet(src.host_addr, dst_isd=src.isd_id, dst_ad=src.ad_id, payload=drkey_reply, dst_port=port)
         self.send(pkt, src.host_addr, port)
