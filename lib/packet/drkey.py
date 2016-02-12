@@ -214,10 +214,11 @@ class DRKeySendKeys(DRKeyPayloadBase):
         :type raw:
         """
         super().__init__()
-        self.keys_blob_length = None
-        self.keys_blob = None
+        self.session_id = None
+        self.keys_length = None
+        self.keys = None
         self.cc_length = None
-        self.certificate_chain = None
+        #  self.certificate_chain = None
         if raw is not None:
             self._parse(raw)
 
@@ -226,46 +227,54 @@ class DRKeySendKeys(DRKeyPayloadBase):
         Populates fields from a raw bytes block.
         """
         data = Raw(raw, self.NAME, len(raw))
-        self.keys_blob_length = int.from_bytes(data.pop(2), byteorder='big', signed=False)
-        self.keys_blob = data.pop(self.keys_blob_length)
+        self.session_id = data.pop(16)
+        self.keys_length = int.from_bytes(data.pop(2), byteorder='big', signed=False)
+        self.keys = []
+        for _ in self.keys_length:
+            self.keys.append(data.pop(16))
         self.cc_length = int.from_bytes(data.pop(4), byteorder='big', signed=False)
         self.certificate_chain = CertificateChain(data.pop(self.cc_length).decode("UTF-8"))
 
     @classmethod
-    def from_values(cls, keys_blob, certificate_chain):
+    def from_values(cls, session_id, keys, certificate_chain):
         """
         Returns PathSegmentInfo with fields populated from values.
-        :param keys_blob: encrypted blob of concatenated {session_id, session_key_1, ..., session_key_n}
-        :type keys_blob: bytes
-        :param certificate_chain: encrypted blob of concatenated {session_id, session_key_1, ..., session_key_n}
-        :type certificate_chain: bytes
+        :param session_id:
+        :type session_id: bytes
+        :param keys: encrypted blob of concatenated [session_key_1, ..., session_key_n]
+        :type keys: [bytes]
+        :param certificate_chain:
+        :type certificate_chain: CertificateChain
         """
         inst = cls()
-        inst.keys_blob = keys_blob
+        inst.session_id = session_id
+        inst.keys = keys
         inst.certificate_chain = certificate_chain
         return inst
 
     def pack(self):
-        self.keys_blob_length = len(self.keys_blob)
+        self.keys_length = len(self.keys)
         certificate_chain = self.certificate_chain.pack()
         self.cc_length = len(certificate_chain)
         packed = []
+        packed.append(self.session_id)
         packed.append(struct.pack("!H", self.keys_blob_length))
-        packed.append(self.keys_blob)
+        for key in self.keys:
+            packed.append(key)
         packed.append(struct.pack("!I", self.cc_length))
         packed.append(certificate_chain)
         return b"".join(packed)
 
     def __len__(self):  # pragma: no cover
-        if not self.keys_blob_length:
-            self.keys_blob_length = len(self.keys_blob_length)
+        if not self.keys_length:
+            self.keys_length = len(self.keys)
         if not self.cc_length:
             self.cc_length = len(self.certificate_chain.pack())
-        return 2 + self.keys_blob_length + 4 + self.cc_length
+        return 16 + 2 + self.keys_length * 16 + 4 + self.cc_length
 
     def __str__(self):
-        return "[%s(%dB): Keys Blob: %s]" % (
-            self.NAME, len(self), str(self.keys_blob)
+        return "[%s(%dB): Keys: %s]" % (
+            self.NAME, len(self), str(self.keys)
         )
 
 
@@ -284,6 +293,7 @@ class DRKeyAcknowledgeKeys(DRKeyPayloadBase):
         :type raw:
         """
         super().__init__()
+        self.session_id = None
         self.sign_length = None
         self.signature = None
         self.cc_length = None
@@ -296,21 +306,25 @@ class DRKeyAcknowledgeKeys(DRKeyPayloadBase):
         Populates fields from a raw bytes block.
         """
         data = Raw(raw, self.NAME, len(raw))
+        self.session_id = data.pop(16)
         self.sign_length = int.from_bytes(data.pop(2), byteorder='big', signed=False)
-        self.signature = data.pop(self.keys_blob_length)
+        self.signature = data.pop(self.sign_length)
         self.cc_length = int.from_bytes(data.pop(4), byteorder='big', signed=False)
         self.certificate_chain = CertificateChain(data.pop(self.cc_length).decode("UTF-8"))
 
     @classmethod
-    def from_values(cls, signature, certificate_chain):
+    def from_values(cls, session_id, signature, certificate_chain):
         """
         Returns PathSegmentInfo with fields populated from values.
+        :param session_id:
+        :type session_id: bytes
         :param keys_blob: encrypted blob of concatenated {session_id, session_key_1, ..., session_key_n}
         :type keys_blob: bytes
         :param certificate_chain: encrypted blob of concatenated {session_id, session_key_1, ..., session_key_n}
         :type certificate_chain: bytes
         """
         inst = cls()
+        inst.session_id = session_id
         inst.signature = signature
         inst.certificate_chain = certificate_chain
         return inst
@@ -320,6 +334,7 @@ class DRKeyAcknowledgeKeys(DRKeyPayloadBase):
         certificate_chain = self.certificate_chain.pack()
         self.cc_length = len(certificate_chain)
         packed = []
+        packed.append(self.session_id)
         packed.append(struct.pack("!H", self.sign_length))
         packed.append(self.signature)
         packed.append(struct.pack("!I", self.cc_length))
@@ -331,7 +346,7 @@ class DRKeyAcknowledgeKeys(DRKeyPayloadBase):
             self.sign_length = len(self.signature)
         if not self.cc_length:
             self.cc_length = len(self.certificate_chain.pack())
-        return 2 + self.sign_length + 4 + self.cc_length
+        return 16 + 2 + self.sign_length + 4 + self.cc_length
 
     def __str__(self):
         return "[%s(%dB): Signature: %s CertChain: %]" % (
