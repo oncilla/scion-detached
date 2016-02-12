@@ -126,6 +126,7 @@ class DRKeyReplyKey(DRKeyPayloadBase):
         """
         super().__init__()
         self.hop = 0
+        self.session_id = None
         self.enc_key_length = None
         self.encrypted_session_key = None
         self.sign_length = None
@@ -141,6 +142,7 @@ class DRKeyReplyKey(DRKeyPayloadBase):
         """
         data = Raw(raw, self.NAME, len(raw))
         self.hop = data.pop(1)
+        self.session_id = data.pop(16)
         self.enc_key_length = int.from_bytes(data.pop(2), byteorder='big', signed=False)
         self.encrypted_session_key = data.pop(self.enc_key_length)
         self.sign_length = int.from_bytes(data.pop(2), byteorder='big', signed=False)
@@ -149,11 +151,13 @@ class DRKeyReplyKey(DRKeyPayloadBase):
         self.certificate_chain = CertificateChain(data.pop(self.cc_length).decode("UTF-8"))
 
     @classmethod
-    def from_values(cls, hop, encrypted_session_key, signature, certificate_chain):
+    def from_values(cls, hop, session_id, encrypted_session_key, signature, certificate_chain):
         """
         Returns PathSegmentInfo with fields populated from values.
         :param hop: hop the packet is addressed to
-        :type: int (PathSegmentType)
+        :type hop: int (PathSegmentType)
+        :param session_id:
+        :type session_id: bytes
         :param encrypted_session_key: encrypted session key
         :type encrypted_session_key: bytes
         :param signature: signature of concatenated {encrypted_session_key, session_id}
@@ -163,6 +167,7 @@ class DRKeyReplyKey(DRKeyPayloadBase):
         """
         inst = cls()
         inst.hop = hop
+        inst.session_id = session_id
         inst.signature = signature
         inst.encrypted_session_key = encrypted_session_key
         inst.certificate_chain = certificate_chain
@@ -176,6 +181,7 @@ class DRKeyReplyKey(DRKeyPayloadBase):
 
         packed = []
         packed.append(struct.pack("!B", self.hop))
+        packed.append(self.session_id)
         packed.append(struct.pack("!H", self.enc_key_length))
         packed.append(self.encrypted_session_key)
         packed.append(struct.pack("!H", self.sign_length))
@@ -191,7 +197,7 @@ class DRKeyReplyKey(DRKeyPayloadBase):
             self.sign_length = len(self.signature)
         if not self.cc_length:
             self.cc_length = len(self.certificate_chain.pack())
-        return 1 + 2 + self.enc_key_length + 2 + self.sign_length + 4 + self.cc_length
+        return 1 + 16 + 2 + self.enc_key_length + 2 + self.sign_length + 4 + self.cc_length
 
     def __str__(self):
         return "[%s(%dB): hop:%d EncSessionKey: %s Signature: %s]" % (
