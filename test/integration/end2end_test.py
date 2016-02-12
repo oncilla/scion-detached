@@ -118,8 +118,10 @@ class Ping(object):
         # Local api on, random port:
         self.sd = SCIONDaemon.start(
             conf_dir, self.src.host_addr, run_local_api=True, port=0)
-        self.get_path()
-        self.sd.get_drkeys(self.src, self.dst, self.path)
+        # self.get_path()
+        self.path = self.sd.get_paths(self.dst.isd_id, self.dst.ad_id)[0]
+        self.sd.get_drkeys(self.dst, self.path, bytes(16))
+        logging.debug("DRKey received: %s", self.sd.get_drkeys(self.dst, self.path, bytes(16)))
         self.sock = UDPSocket(bind=(str(self.src.host_addr), 0, "Ping App"),
                               addr_type=AddrType.IPV4)
 
