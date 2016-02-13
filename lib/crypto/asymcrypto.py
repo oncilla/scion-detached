@@ -36,8 +36,9 @@ def generate_sign_keypair():
 
 def generate_enc_pub_key(private_key):
     """
+    Generate a Curve25519 public key, belonging to the private key
 
-    :param private_key:
+    :param private_key: private key (32 B)
     :type private_key: bytes
     :return:
     """
@@ -80,14 +81,15 @@ def verify(msg, sig, verifying_key):
 
 def encrypt_session_key(private_key, public_key, msg):
     """
+    Encrypt the session key in the DRKey exchange.
 
-    :param private_key:
+    :param private_key: private key of the certificate server (32 B)
     :type private_key: bytes
-    :param public_key:
+    :param public_key: public key of the source (32 B)
     :type public_key: bytes
-    :param msg:
+    :param msg: session key (16 B)
     :type msg: bytes
-    :return:
+    :return: encrpyted session key
     """
 
     sk = PrivateKey(private_key)
@@ -100,14 +102,15 @@ def encrypt_session_key(private_key, public_key, msg):
 
 def decrypt_session_key(private_key, public_key, cypher):
     """
+    Decrypt the session key in the DRKey exchange.
 
-    :param private_key:
+    :param private_key: private key of the source (32 B)
     :type private_key: bytes
-    :param public_key:
+    :param public_key: public key of the certificate server (32 B)
     :type public_key: bytes
-    :param cypher:
+    :param cypher: encrypted session key (16 B)
     :type cypher: bytes
-    :return:
+    :return: decrypted session key
     """
     sk = PrivateKey(private_key)
     pk = PublicKey(public_key)

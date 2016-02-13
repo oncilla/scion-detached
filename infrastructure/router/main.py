@@ -342,12 +342,12 @@ class Router(SCIONElement):
             port = SCION_UDP_PORT
         self.send(spkt, addr, port)
 
-    def process_drkey_packet(self, drkey_pkt, _):
+    def process_drkey_packet(self, drkey_pkt, from_local_ad):
         """
-        Process path management packets.
+        Process drkey packet.
 
-        :param mgmt_pkt: The path mgmt packet.
-        :type mgmt_pkt: :class:`lib.packet.path_mgmt.PathMgmtPacket`
+        :param drkey_pkt: The drkey packet.
+        :type drkey_pkt: SCIONL4Packet`
         """
         payload = drkey_pkt.get_payload()
 

@@ -51,7 +51,7 @@ class DRKeyRequestKey(DRKeyPayloadBase):
         Initialize an instance of the class DRKeyRequestKey.
 
         :param raw:
-        :type raw:
+        :type raw: bytes
         """
         super().__init__()
         self.hop = 0
@@ -75,11 +75,12 @@ class DRKeyRequestKey(DRKeyPayloadBase):
     def from_values(cls, hop, session_id, public_key):
         """
         Returns DRKeyRequestKey with fields populated from values.
+
         :param hop: hop on path the packet is addressed to
         :type: int
-        :param session_id: session id
+        :param session_id: session id of the flow (16 B)
         :type session_id: bytes
-        :param public_key: public key
+        :param public_key: public key of the source
         :type public_key: bytes
         """
         inst = cls()
@@ -122,7 +123,7 @@ class DRKeyReplyKey(DRKeyPayloadBase):
         Initialize an instance of the class DRKeyRequestKey.
 
         :param raw:
-        :type raw:
+        :type raw: bytes
         """
         super().__init__()
         self.hop = 0
@@ -142,7 +143,7 @@ class DRKeyReplyKey(DRKeyPayloadBase):
         """
         data = Raw(raw, self.NAME, len(raw))
         self.hop = data.pop(1)
-        self.session_id = data.pop(16)
+        self.session_id = data.pop(DRKeyConstants.SESSION_ID_BYTE_LENGTH)
         self.enc_key_length = int.from_bytes(data.pop(2), byteorder='big', signed=False)
         self.encrypted_session_key = data.pop(self.enc_key_length)
         self.sign_length = int.from_bytes(data.pop(2), byteorder='big', signed=False)
@@ -154,15 +155,16 @@ class DRKeyReplyKey(DRKeyPayloadBase):
     def from_values(cls, hop, session_id, encrypted_session_key, signature, certificate_chain):
         """
         Returns PathSegmentInfo with fields populated from values.
+
         :param hop: hop the packet is addressed to
         :type hop: int (PathSegmentType)
-        :param session_id:
+        :param session_id: session id of the flow (16 B)
         :type session_id: bytes
         :param encrypted_session_key: encrypted session key
         :type encrypted_session_key: bytes
         :param signature: signature of concatenated {encrypted_session_key, session_id}
         :type signature: bytes
-        :param certificate_chain: certificate chain
+        :param certificate_chain: certificate chain of the AS at hop
         :type certificate_chain: CertificateChain
         """
         inst = cls()
@@ -217,7 +219,7 @@ class DRKeySendKeys(DRKeyPayloadBase):
         Initialize an instance of the class DRKeyRequestKey.
 
         :param raw:
-        :type raw:
+        :type raw: bytes
         """
         super().__init__()
         self.session_id = None
@@ -233,11 +235,11 @@ class DRKeySendKeys(DRKeyPayloadBase):
         Populates fields from a raw bytes block.
         """
         data = Raw(raw, self.NAME, len(raw))
-        self.session_id = data.pop(16)
+        self.session_id = data.pop(DRKeyConstants.SESSION_ID_BYTE_LENGTH)
         self.keys_length = int.from_bytes(data.pop(2), byteorder='big', signed=False)
         self.keys = []
         for _ in self.keys_length:
-            self.keys.append(data.pop(16))
+            self.keys.append(data.pop(DRKeyConstants.SESSION_ID_BYTE_LENGTH))
         self.cc_length = int.from_bytes(data.pop(4), byteorder='big', signed=False)
         self.certificate_chain = CertificateChain(data.pop(self.cc_length).decode("UTF-8"))
 
@@ -245,11 +247,12 @@ class DRKeySendKeys(DRKeyPayloadBase):
     def from_values(cls, session_id, keys, certificate_chain):
         """
         Returns PathSegmentInfo with fields populated from values.
-        :param session_id:
+
+        :param session_id: session id from flow (16 B)
         :type session_id: bytes
         :param keys: encrypted blob of concatenated [session_key_1, ..., session_key_n]
         :type keys: [bytes]
-        :param certificate_chain:
+        :param certificate_chain: certificate chain of the source
         :type certificate_chain: CertificateChain
         """
         inst = cls()
@@ -264,7 +267,7 @@ class DRKeySendKeys(DRKeyPayloadBase):
         self.cc_length = len(certificate_chain)
         packed = []
         packed.append(self.session_id)
-        packed.append(struct.pack("!H", self.keys_blob_length))
+        packed.append(struct.pack("!H", self.keys_length))
         for key in self.keys:
             packed.append(key)
         packed.append(struct.pack("!I", self.cc_length))
@@ -276,7 +279,8 @@ class DRKeySendKeys(DRKeyPayloadBase):
             self.keys_length = len(self.keys)
         if not self.cc_length:
             self.cc_length = len(self.certificate_chain.pack())
-        return 16 + 2 + self.keys_length * 16 + 4 + self.cc_length
+        return DRKeyConstants.SESSION_ID_BYTE_LENGTH + \
+            2 + self.keys_length * DRKeyConstants.SESSION_ID_BYTE_LENGTH + 4 + self.cc_length
 
     def __str__(self):
         return "[%s(%dB): Keys: %s]" % (
@@ -286,7 +290,7 @@ class DRKeySendKeys(DRKeyPayloadBase):
 
 class DRKeyAcknowledgeKeys(DRKeyPayloadBase):
     """
-    DRKeySendKeys class used in sending DRKeys to the destination.
+    DRKeyAcknowledgeKeys class used in acknowledging DRKeys to the destination.
     """
     NAME = "DRKeyAcknowledgeKeys"
     PAYLOAD_TYPE = DRKT.ACKNOWLEDGE_KEYS
@@ -296,7 +300,7 @@ class DRKeyAcknowledgeKeys(DRKeyPayloadBase):
         Initialize an instance of the class DRKeyRequestKey.
 
         :param raw:
-        :type raw:
+        :type raw: bytes
         """
         super().__init__()
         self.session_id = None
@@ -312,7 +316,7 @@ class DRKeyAcknowledgeKeys(DRKeyPayloadBase):
         Populates fields from a raw bytes block.
         """
         data = Raw(raw, self.NAME, len(raw))
-        self.session_id = data.pop(16)
+        self.session_id = data.pop(DRKeyConstants.SESSION_ID_BYTE_LENGTH)
         self.sign_length = int.from_bytes(data.pop(2), byteorder='big', signed=False)
         self.signature = data.pop(self.sign_length)
         self.cc_length = int.from_bytes(data.pop(4), byteorder='big', signed=False)
@@ -322,10 +326,10 @@ class DRKeyAcknowledgeKeys(DRKeyPayloadBase):
     def from_values(cls, session_id, signature, certificate_chain):
         """
         Returns PathSegmentInfo with fields populated from values.
-        :param session_id:
+        :param session_id: session id of the flow (16 B)
         :type session_id: bytes
-        :param keys_blob: encrypted blob of concatenated {session_id, session_key_1, ..., session_key_n}
-        :type keys_blob: bytes
+        :param signature: signature
+        :type signature: bytes
         :param certificate_chain: encrypted blob of concatenated {session_id, session_key_1, ..., session_key_n}
         :type certificate_chain: bytes
         """

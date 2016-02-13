@@ -225,10 +225,12 @@ class CertServer(SCIONElement):
 
     def _reply_drkey(self, key, info):
         """
-        :param key:
+        Send the session key to the requester.
+
+        :param key: (Session ID, Public Key) tuple
         :type key: (bytes, bytes)
-        :param info: (SCIONAddr, int, int)
-        :return:
+        :param info: (dst address, dst port, hop) tuple
+        :type info: (SCIONAddr, int, int)
         """
         session_id, public_key = key
         src, port, hop = info

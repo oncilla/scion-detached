@@ -503,7 +503,7 @@ class SCIONDaemon(SCIONElement):
         Called by RequestHandler to check if a given drkey request can be
         fulfilled.
 
-        :param session_id: session id
+        :param session_id: session id (16 B)
         :type session_id: bytes
         """
 
@@ -517,9 +517,9 @@ class SCIONDaemon(SCIONElement):
         """
         Called by RequestHandler to fetch the requested drkeys.
 
-        :param session_id: session id
+        :param session_id: session id (16 B)
         :type session_id: bytes
-        :param request:
+        :param request: (Path, threading Event) pair
         :type request: (PathBase, Event)
         """
         path, _ = request
@@ -536,7 +536,7 @@ class SCIONDaemon(SCIONElement):
         """
         Called by RequestHandler to signal that the request has been fulfilled.
 
-        :param request:
+        :param request: (Path, threading Event) pair
         :type request: (PathBase, Event)
         """
         request[1].set()
@@ -547,7 +547,7 @@ class SCIONDaemon(SCIONElement):
 
         :param path: chosen path to the address. Make sure path.interfaces is not an empty list
         :type path: PathBase
-        :param session_id: session id (16 bytes)
+        :param session_id: session id (16 B)
         :type session_id: bytes
         :return Event
         """
@@ -576,7 +576,7 @@ class SCIONDaemon(SCIONElement):
         Called by RequestHandler to check if a given drkey request can be
         fulfilled.
 
-        :param session_id: session id
+        :param session_id: session id (16 B)
         :type session_id: bytes
         """
         return session_id in self._drkey_successful
@@ -585,9 +585,9 @@ class SCIONDaemon(SCIONElement):
         """
         Called by RequestHandler to fetch the requested drkeys.
 
-        :param session_id: session id
-        :type session_id: (bytes)
-        :param req: (SCIONAddr, PathBase, [bytes])
+        :param session_id: session id (16 B)
+        :type session_id: bytes
+        :param req: (dst address, path, keys, threading event) tuple
         :type req: (SCIONAddr, PathBase, [bytes], Event)
         """
         dst, path, keys, _ = req
@@ -601,17 +601,21 @@ class SCIONDaemon(SCIONElement):
         """
         Called by RequestHandler to signal that the request has been fulfilled.
 
-        :param req: (SCIONAddr, PathBase, [bytes])
+        :param req: (dst address, path, keys, threading event) tuple
         :type req: (SCIONAddr, PathBase, [bytes], Event)
         """
         req[3].set()
 
     def _start_sending_drkeys(self, dst, path, session_id, keys):
         """
+        Start sending the drkeys to the destination.
 
-        :param dst:
-        :param path:
-        :param session_id:
+        :param dst: destination address
+        :type dst: SCIONAddr
+        :param path: path to destination
+        :type path: PathBase
+        :param session_id: session id of the flow (16 B)
+        :type bytes
         :return:
         """
 
@@ -623,31 +627,13 @@ class SCIONDaemon(SCIONElement):
         """
         Computes session key for the destination.
 
-        :param session_id: session id (16 bytes)
+        :param session_id: session id (16 B)
         :type session_id: bytes
-        :return: bytes
+        :return: bytes (16 B)
         """
         return compute_session_key(self._secret_value, session_id)
 
-    def get_drkeys_non_blocking(self, dst, path, session_id):
-        """
-        Get the DRKeys non-blocking. Returns empty list if not all DRKeys are available.
-
-        :param dst:
-        :param path:
-        :param session_id:
-        :type session_id: bytes
-        :return:
-        """
-
-        if self._check_drkeys((session_id, None)):
-            return self._get_drkeys_from_map(session_id)
-
-        self._start_drkey_exchange(path, session_id)
-
-        return []
-
-    def get_drkeys(self, dst, path, session_id):
+    def get_drkeys(self, dst, path, session_id, non_blocking=False):
         """
         Get the DRkeys blocking.
 
@@ -655,13 +641,23 @@ class SCIONDaemon(SCIONElement):
         :type dst: SCIONAddr
         :param path: path with non-empty path.interfaces
         :type path: PathBase
-        :param session_id: Session ID of length 16 bytes
+        :param session_id: Session ID (16 B)
         :type session_id: bytes
+        :param non_blocking: function call non blocking
+        :type non_blocking: bool
         :return:
         """
 
         assert path.interfaces
+
+        if self._check_drkeys((session_id, None)):
+            return self._get_drkeys_from_map(session_id)
+
         e = self._start_drkey_exchange(path, session_id)
+
+        if non_blocking:
+            return []
+
         deadline = SCIONTime.get_time() + self.TIMEOUT
         while not self._wait_for_events([e], deadline):
             logging.error("get_drkeys timed out for %s: retry", session_id)
@@ -674,31 +670,28 @@ class SCIONDaemon(SCIONElement):
         drkeys.append(self.get_drkey_destination(session_id))
         return drkeys
 
-    def send_drkeys_non_blocking(self, dst, path, session_id):
+    def send_drkeys(self, dst, path, session_id, non_blocking=False):
         """
 
-        :param dst:
-        :param path:
-        :param session_id:
-        :return:
-        """
-        keys = self.get_drkeys_non_blocking(dst, path, session_id)
-
-        if not keys:
-            return False
-
-        self._start_sending_drkeys(dst, path, session_id, keys)
-        return True
-
-    def send_drkeys(self, dst, path, session_id):
-        """
-
-        :param dst:
-        :param path:
-        :param session_id:
+        :param dst: address of the destination
+        :type dst: SCIONAddr
+        :param path: path to the destination
+        :type path: PathBase
+        :param session_id: session id (16 B)
+        :type session_id: bytes
+        :param non_blocking: non blocking
+        :type non_blocking: bool
         :return:
         """
 
+        #  handle non blocking case
+        if non_blocking:
+            keys = self.get_drkeys(dst, path, session_id, True)
+            if not keys:
+                return False
+            self._start_sending_drkeys(dst, path, session_id, keys)
+
+        # handle blocking case
         keys = self.get_drkeys(dst, path, session_id)
         e = self._start_sending_drkeys(dst, path, session_id, keys)
         deadline = SCIONTime.get_time() + self.TIMEOUT
@@ -711,9 +704,11 @@ class SCIONDaemon(SCIONElement):
 
     def get_drkeys_remote(self, session_id):
         """
+        Get the DRKeys of the session, if already available. Otherwise, an empty list is returned.
 
-        :param session_id:
-        :return:
+        :param session_id: session id (16 B)
+        :type session_id: bytes
+        :return: [bytes]
         """
         if session_id in self._drkeys_remote:
             return self._drkeys_remote[session_id]
@@ -721,10 +716,10 @@ class SCIONDaemon(SCIONElement):
 
     def handle_drkey_ack(self, pkt):
         """
+        Handle a DRKey acknowledgment.
 
-        :param pkt:
+        :param pkt: packet containing the acknowledgment.
         :type pkt: SCIONL4Packet
-        :return:
         """
         payload = pkt.get_payload()
         assert isinstance(payload, DRKeyAcknowledgeKeys)
@@ -736,10 +731,10 @@ class SCIONDaemon(SCIONElement):
 
     def handle_drkey_reply(self, pkt):
         """
+        Handle a DRKey reply.
 
-        :param pkt:
+        :param pkt: packet containing the reply
         :type pkt: SCIONL4Packet
-        :return:
         """
 
         payload = pkt.get_payload()
@@ -758,10 +753,10 @@ class SCIONDaemon(SCIONElement):
 
     def handle_drkey_send(self, pkt):
         """
+        Handle a DRKey send payload.
 
-        :param pkt:
+        :param pkt: packet containing the send payload
         :type pkt: SCIONL4Packet
-        :return:
         """
 
         payload = pkt.get_payload()
