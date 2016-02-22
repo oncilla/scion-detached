@@ -93,12 +93,14 @@ class Ping(object):
         (next_hop, port) = self.sd.get_first_hop(spkt)
         self.sd.send(spkt, next_hop, port)
 
-        logging.debug("Start to get keys (blocking)")
+        logging.info("Start to get keys (blocking)")
         self.keys = self.sd.get_drkeys(self.dst, self.path, self.session_id)
+        logging.info("Start sending keys (blocking)")
         self.sd.send_drkeys(self.dst, self.path, self.session_id)
         logging.debug("Sent keys %s", self.keys)
 
     def recv(self):
+        logging.info("Waiting for pong")
         packet = self.sock.recv()[0]
         spkt = SCIONL4Packet(packet)
         payload = spkt.get_payload()
@@ -149,9 +151,10 @@ class Pong(object):
             assert next_hop is not None
             self.sd.send(spkt, next_hop, port)
 
-        while not self.sd.get_drkeys(self.session_id):
-            time.sleep(0.001)
-            self.keys = self.sd.get_drkeys_remote(self.session_id)
+        while not self.sd.get_drkeys_remote(self.session_id):
+            time.sleep(0.0001)
+
+        self.keys = self.sd.get_drkeys_remote(self.session_id)
 
         self.sock.close()
         self.sd.stop()

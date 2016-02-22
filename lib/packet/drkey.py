@@ -18,6 +18,7 @@
 Contains all the packet formats used for path management.
 """
 # Stdlib
+import logging
 import struct
 from collections import defaultdict
 
@@ -238,7 +239,7 @@ class DRKeySendKeys(DRKeyPayloadBase):
         self.session_id = data.pop(DRKeyConstants.SESSION_ID_BYTE_LENGTH)
         self.keys_length = int.from_bytes(data.pop(2), byteorder='big', signed=False)
         self.keys = []
-        for _ in self.keys_length:
+        for _ in range(self.keys_length):
             self.keys.append(data.pop(DRKeyConstants.SESSION_ID_BYTE_LENGTH))
         self.cc_length = int.from_bytes(data.pop(4), byteorder='big', signed=False)
         self.certificate_chain = CertificateChain(data.pop(self.cc_length).decode("UTF-8"))
@@ -359,7 +360,7 @@ class DRKeyAcknowledgeKeys(DRKeyPayloadBase):
         return 16 + 2 + self.sign_length + 4 + self.cc_length
 
     def __str__(self):
-        return "[%s(%dB): Signature: %s CertChain: %]" % (
+        return "[%s(%dB): Signature: %s CertChain: %s]" % (
             self.NAME, len(self), str(self.signature), str(self.certificate_chain)
         )
 

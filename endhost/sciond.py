@@ -28,7 +28,7 @@ from nacl.public import PrivateKey
 from nacl.utils import random as random_bytes
 
 from infrastructure.scion_elem import SCIONElement
-from lib.crypto.asymcrypto import decrypt_session_key
+from lib.crypto.asymcrypto import decrypt_session_key, sign
 from lib.crypto.certificate import Certificate
 from lib.crypto.hash_chain import HashChain
 from lib.crypto.symcrypto import compute_session_key
@@ -115,7 +115,7 @@ class SCIONDaemon(SCIONElement):
         self._private_key = key_pair.encode()
         self._public_key = key_pair.public_key.encode()
         self._secret_value = random_bytes(16)
-        self._session_drkeys_map = dict()
+        self._session_drkeys_map = dict()  # {session_id -> [path_length, {isd_ad -> (hop, session_key)}]}
         self._drkey_successful = []  # list of successful session_id
         self._drkeys_remote = dict()
 
@@ -507,6 +507,9 @@ class SCIONDaemon(SCIONElement):
         :type session_id: bytes
         """
 
+        if session_id not in self._session_drkeys_map:
+            return False
+
         path_length = self._session_drkeys_map[session_id][0]
         length = len([x for x in self._session_drkeys_map[session_id][1].values() if x[1]])
         logging.debug("values: %s", self._session_drkeys_map[session_id][1].values())
@@ -650,7 +653,7 @@ class SCIONDaemon(SCIONElement):
 
         assert path.interfaces
 
-        if self._check_drkeys((session_id, None)):
+        if self._check_drkeys(session_id):
             return self._get_drkeys_from_map(session_id)
 
         e = self._start_drkey_exchange(path, session_id)
@@ -666,7 +669,7 @@ class SCIONDaemon(SCIONElement):
         return self._get_drkeys_from_map(session_id)
 
     def _get_drkeys_from_map(self, session_id):
-        drkeys = sorted([x for x in self._session_drkeys_map[session_id][1].values()], key=lambda x: x[0])
+        drkeys = sorted([x[1] for x in self._session_drkeys_map[session_id][1].values()], key=lambda x: x[0])
         drkeys.append(self.get_drkey_destination(session_id))
         return drkeys
 
@@ -696,8 +699,8 @@ class SCIONDaemon(SCIONElement):
         e = self._start_sending_drkeys(dst, path, session_id, keys)
         deadline = SCIONTime.get_time() + self.TIMEOUT
         while not self._wait_for_events([e], deadline):
-            logging.error("get_drkeys timed out for %s: retry", session_id)
-            e = self._start_drkey_exchange(path, session_id)
+            logging.error("send_drkeys timed out for %s: retry", session_id)
+            e = self._start_sending_drkeys(dst, path, session_id, keys)
             deadline = SCIONTime.get_time() + self.TIMEOUT
 
         return True
@@ -758,13 +761,20 @@ class SCIONDaemon(SCIONElement):
         :param pkt: packet containing the send payload
         :type pkt: SCIONL4Packet
         """
+        logging.debug("Handle DRKey send %s", pkt.get_payload())
 
         payload = pkt.get_payload()
         assert isinstance(payload, DRKeySendKeys)
 
         self._drkeys_remote[payload.session_id] = payload.keys
 
-        logging.debug("Handle DRKey send %s", pkt.get_payload())
+        signature = sign(payload.session_id, self._private_key)
+        cert_chain = self.trust_store.get_cert(self.addr.get_isd_ad().isd, self.addr.get_isd_ad().ad)
+        pkt.reverse()
+        pkt.set_payload(DRKeyAcknowledgeKeys.from_values(payload.session_id, signature, cert_chain))
+        (next_hop, port) = self.get_first_hop(pkt)
+        assert next_hop is not None
+        self.send(pkt, next_hop, port)
 
     def _send_to_next_hop(self, pkt, if_id):
         """

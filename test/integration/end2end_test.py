@@ -118,10 +118,7 @@ class Ping(object):
         # Local api on, random port:
         self.sd = SCIONDaemon.start(
             conf_dir, self.src.host_addr, run_local_api=True, port=0)
-        # self.get_path()
-        self.path = self.sd.get_paths(self.dst.isd_id, self.dst.ad_id)[0]
-        self.sd.get_drkeys(self.dst, self.path, bytes(16))
-        logging.debug("DRKey received: %s", self.sd.get_drkeys(self.dst, self.path, bytes(16)))
+        self.get_path()
         self.sock = UDPSocket(bind=(str(self.src.host_addr), 0, "Ping App"),
                               addr_type=AddrType.IPV4)
 
@@ -147,8 +144,16 @@ class Ping(object):
         spkt = SCIONL4Packet.from_values(
             cmn_hdr, addr_hdr, self.path, [], udp_hdr, payload)
         (next_hop, port) = self.sd.get_first_hop(spkt)
-      #  assert next_hop is not None
-      #  assert next_hop == self.hop
+        assert next_hop is not None
+        assert next_hop == self.hop
+
+        logging.info("Sending packet: \n%s\nFirst hop: %s:%s",
+                     spkt, next_hop, port)
+        if self.iflist:
+            logging.info("Interfaces:")
+            for (isd_ad, ifid) in self.iflist:
+                logging.info("(%d, %d):%d",
+                             isd_ad >> 20, isd_ad & 0xfffff, ifid)
         self.sd.send(spkt, next_hop, port)
 
     def recv(self):
@@ -218,14 +223,13 @@ class TestSCIONDaemon(unittest.TestCase):
         every AD from `sources`, and receiver is from every AD from
         `destinations`.
         """
-
         thread = threading.current_thread()
         thread.name = "E2E.MainThread"
         client_ip = haddr_parse_interface(client)
         server_ip = haddr_parse_interface(server)
         failures = 0
-        for src_id in [sources[0]]:
-            for dst_id in [destinations[0]]:
+        for src_id in sources:
+            for dst_id in destinations:
                 logging.info("Testing: %s -> %s", src_id, dst_id)
                 src = SCIONAddr.from_values(src_id[0], src_id[1], client_ip)
                 dst = SCIONAddr.from_values(dst_id[0], dst_id[1], server_ip)
@@ -289,10 +293,10 @@ def main():
         args.server = "169.254.0.3" if args.mininet else "127.0.0.3"
 
     ad_list = _load_ad_list()
-    # srcs = _parse_tuple(args.src_ad, ad_list)
-    # dsts = _parse_tuple(args.dst_ad, ad_list)
+    srcs = _parse_tuple(args.src_ad, ad_list)
+    dsts = _parse_tuple(args.dst_ad, ad_list)
 
-    TestSCIONDaemon().test(args.client, args.server, [(1, 17)], [(2, 25)])
+    TestSCIONDaemon().test(args.client, args.server, srcs, dsts)
 
 
 if __name__ == "__main__":
