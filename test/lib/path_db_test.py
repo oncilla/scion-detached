@@ -119,10 +119,10 @@ class TestPathSegmentDBInit(object):
         pth_seg_db = PathSegmentDB(300)
         base.assert_called_once_with("", save_to_file=False)
         db.create.assert_called_once_with('record', 'id', 'first_isd',
-                                          'first_ad', 'last_isd', 'last_ad',
+                                          'first_as', 'last_isd', 'last_as',
                                           mode='override')
         db.create_index.assert_has_calls([call('id'), call('last_isd'),
-                                          call('last_ad')])
+                                          call('last_as')])
         ntools.eq_(pth_seg_db._db, db)
         ntools.eq_(pth_seg_db._segment_ttl, 300)
 
@@ -173,83 +173,86 @@ class TestPathSegmentDBUpdate(object):
     """
     Unit tests for lib.path_db.PathSegmentDB.update
     """
-    @patch("lib.path_db.PathSegmentDBRecord", autospec=True)
-    def test_basic(self, db_rec):
-        pcb = create_mock(class_=PathSegment)
-        record = create_mock(['id'])
-        record.id = "str"
-        db_rec.return_value = record
-        pth_seg_db = PathSegmentDB()
-        pth_seg_db._db = create_mock(['insert'])
-        pth_seg_db._db.return_value = []
-        ntools.eq_(pth_seg_db.update(pcb, 1, 2, 3, 4), DBResult.ENTRY_ADDED)
-        db_rec.assert_called_once_with(pcb)
-        pth_seg_db._db.assert_called_once_with(id="str")
-        pth_seg_db._db.insert.assert_called_once_with(record, "str", 1, 2, 3, 4)
+    def _mk_pcb(self, exp=0):
+        pcb = create_mock(["get_expiration_time", "get_first_pcbm",
+                           "get_last_pcbm"])
+        pcb.get_expiration_time.return_value = exp
+        pcb.get_first_pcbm.return_value = self._mk_pcbm(1, 2)
+        pcb.get_last_pcbm.return_value = self._mk_pcbm(3, 4)
+        return pcb
+
+    def _mk_pcbm(self, isd, as_):
+        pcbm = create_mock(["isd_as"])
+        pcbm.isd_as = isd, as_
+        return pcbm
 
     @patch("lib.path_db.PathSegmentDBRecord", autospec=True)
-    def test_none(self, db_rec):
-        pcb = create_mock(["get_expiration_time"], class_=PathSegment)
-        pcb.get_expiration_time.return_value = -1
+    def test_add(self, db_rec):
+        inst = PathSegmentDB()
+        inst._db = create_mock(['insert'])
+        inst._db.return_value = []
+        pcb = self._mk_pcb()
         record = create_mock(['id'])
         record.id = "str"
-        cur_rec = create_mock(['pcb'])
-        cur_rec.pcb = create_mock(["get_expiration_time"])
-        cur_rec.pcb.get_expiration_time.return_value = 0
         db_rec.return_value = record
-        pth_seg_db = PathSegmentDB()
-        pth_seg_db._db = create_mock()
-        pth_seg_db._db.return_value = {0: {'record': cur_rec}}
-        ntools.eq_(pth_seg_db.update(pcb, 1, 2, 3, 4), DBResult.NONE)
+        # Call
+        ntools.eq_(inst.update(pcb), DBResult.ENTRY_ADDED)
+        # Tests
+        db_rec.assert_called_once_with(pcb)
+        inst._db.assert_called_once_with(id="str")
+        inst._db.insert.assert_called_once_with(record, "str", 1, 2, 3, 4)
+
+    @patch("lib.path_db.PathSegmentDBRecord", autospec=True)
+    def test_outdated(self, db_rec):
+        inst = PathSegmentDB()
+        inst._db = create_mock()
+        pcb = self._mk_pcb(-1)
+        cur_rec = create_mock(["pcb"])
+        cur_rec.pcb = self._mk_pcb(0)
+        inst._db.return_value = {0: {'record': cur_rec}}
+        record = create_mock(['id'])
+        record.id = "str"
+        db_rec.return_value = record
+        # Call
+        ntools.eq_(inst.update(pcb), DBResult.NONE)
+        # Tests
         pcb.get_expiration_time.assert_called_once_with()
         cur_rec.pcb.get_expiration_time.assert_called_once_with()
 
     @patch("lib.path_db.PathSegmentDBRecord", autospec=True)
-    def test_entry_update(self, db_rec):
-        pcb = create_mock(["get_expiration_time"], class_=PathSegment)
-        pcb.get_expiration_time.return_value = 1
+    def test_update(self, db_rec):
+        inst = PathSegmentDB()
+        inst._db = create_mock()
+        pcb = self._mk_pcb(1)
+        cur_rec = create_mock(['pcb', 'id', 'exp_time'])
+        cur_rec.pcb = self._mk_pcb(0)
+        inst._db.return_value = {0: {'record': cur_rec}}
         record = create_mock(['id', 'exp_time'])
         record.id = "str"
-        cur_rec = create_mock(['pcb', 'id', 'exp_time'])
-        cur_rec.pcb = create_mock(["get_expiration_time"])
-        cur_rec.pcb.get_expiration_time.return_value = 0
         db_rec.return_value = record
-        pth_seg_db = PathSegmentDB()
-        pth_seg_db._db = create_mock()
-        pth_seg_db._db.return_value = {0: {'record': cur_rec}}
-        ntools.eq_(pth_seg_db.update(pcb, 1, 2, 3, 4), DBResult.ENTRY_UPDATED)
+        # Call
+        ntools.eq_(inst.update(pcb), DBResult.ENTRY_UPDATED)
+        # Tests
         ntools.eq_(cur_rec.pcb, pcb)
 
     @patch("lib.path_store.SCIONTime.get_time", new_callable=create_mock)
     @patch("lib.path_db.PathSegmentDBRecord", autospec=True)
     def test_with_segment_ttl(self, db_rec, time):
-        pcb = create_mock(class_=PathSegment)
-        record = create_mock(['id'])
-        db_rec.return_value = record
-        pth_seg_db = PathSegmentDB()
-        pth_seg_db._db = create_mock(['insert'])
-        pth_seg_db._db.return_value = []
-        time.return_value = 1
         segment_ttl = 300
-        pth_seg_db = PathSegmentDB(segment_ttl)
+        inst = PathSegmentDB(segment_ttl)
+        inst._db = create_mock(['insert'])
+        cur_rec = create_mock(['pcb', 'id', 'exp_time'])
+        cur_rec.pcb = self._mk_pcb(0)
+        cur_rec.exp_time = 10
+        inst._db.return_value = {0: {'record': cur_rec}}
+        pcb = self._mk_pcb(1)
+        db_rec.return_value = create_mock(['id'])
+        time.return_value = 1
         # Call
-        pth_seg_db.update(pcb, 1, 2, 3, 4)
-        # Test
+        inst.update(pcb)
+        # Tests
         db_rec.assert_called_once_with(pcb, segment_ttl + time.return_value)
-
-
-class TestPathSegmentDBUpdateAll(object):
-    """
-    Unit tests for lib.path_db.PathSegmentDB.update_all
-    """
-    def test_basic(self):
-        pcbs = []
-        for i in range(5):
-            pcbs.append("data" + str(i))
-        pth_seg_db = PathSegmentDB()
-        pth_seg_db.update = create_mock()
-        pth_seg_db.update_all(pcbs, 1, 2, 3, 4)
-        pth_seg_db.update.assert_has_calls([call(i, 1, 2, 3, 4) for i in pcbs])
+        ntools.eq_(cur_rec.exp_time, 301)
 
 
 class TestPathSegmentDBDelete(object):
@@ -315,7 +318,7 @@ class TestPathSegmentDBCall(object):
             cur_rec = create_mock(['pcb', 'exp_time'])
             cur_rec.exp_time = -1
             recs.append({'record': cur_rec, 'first_isd': 0,
-                         'first_ad': 1, 'last_isd': 2, 'last_ad': 3})
+                         'first_as': 1, 'last_isd': 2, 'last_as': 3})
         time.return_value = 0
         pth_seg_db = PathSegmentDB()
         pth_seg_db._db = create_mock(['delete'])

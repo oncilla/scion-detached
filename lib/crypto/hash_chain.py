@@ -15,11 +15,12 @@
 :mod:`hash_chain` --- Generic hash-chain implementation
 =======================================================
 """
-from binascii import hexlify
+# External
 from Crypto.Hash import SHA256
 
 # SCION
 from lib.errors import SCIONIndexError
+from lib.util import hex_str
 
 
 class HashChainExhausted(Exception):
@@ -34,30 +35,9 @@ class HashChain(object):
     The start and length of the chain as well as the hash function used are
     configurable. The used hash function needs to implement the hashlib
     interface.
-
-    :ivar _start_ele:
-    :type _start_ele:
-    :ivar _length:
-    :type _length:
-    :ivar _hash_func:
-    :type _hash_func:
-    :ivar _next_ele_ptr:
-    :type _next_ele_ptr:
-    :ivar entries:
-    :type entries:
     """
 
     def __init__(self, start_ele, length=1000, hash_func=SHA256):
-        """
-        Initialize an instance of the class HashChain.
-
-        :param start_ele:
-        :type start_ele:
-        :param length:
-        :type length:
-        :param hash_func:
-        :type hash_func:
-        """
         assert length > 1, "Hash chain must be at least length 2."
         self._start_ele = start_ele
         self._length = length
@@ -76,7 +56,6 @@ class HashChain(object):
             next_ele = self._hash_func.new(prev_ele).digest()
             self.entries.append(next_ele)
             prev_ele = next_ele
-
         # Initialize to first element.
         self._next_ele_ptr = self._length - 2
 
@@ -85,7 +64,7 @@ class HashChain(object):
         Returns the start element of the chain.
         """
         if hex_:
-            return hexlify(self._start_ele).decode()
+            return hex_str(self._start_ele)
         return self._start_ele
 
     def current_element(self, hex_=False):
@@ -96,7 +75,7 @@ class HashChain(object):
             return None
         ele = self.entries[self._next_ele_ptr + 1]
         if hex_:
-            return hexlify(ele).decode()
+            return hex_str(ele)
         return ele
 
     def next_element(self, hex_=False):
@@ -108,7 +87,7 @@ class HashChain(object):
             return None
         ele = self.entries[self._next_ele_ptr]
         if hex_:
-            return hexlify(ele).decode()
+            return hex_str(ele)
         return ele
 
     def move_to_next_element(self):
@@ -151,16 +130,13 @@ class HashChain(object):
         """
         Verify that a given element belongs to a hash chain.
 
-        :param start_ele: the starting element for verification
-        :type start_ele: bytes
-        :param target_ele: the target element, i.e. the one that needs to be
-                           verified
-        :type target_ele: bytes
-        :param max_tries: the maximum number of tries before aborting the search
-        :type max_tries: int
-        :param hash_func: the hash function to be used (must implement the
-                          hashlib interface)
-        :type hash_func: object
+        :param bytes start_ele: the starting element for verification
+        :param bytes target_ele:
+            the target element, i.e. the one that needs to be verified
+        :param int max_tries:
+            the maximum number of tries before aborting the search
+        :param func hash_func:
+            the hash function to be used (must implement the hashlib interface)
         """
         cur_ele = start_ele
         for _ in range(max_tries):

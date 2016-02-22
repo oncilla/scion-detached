@@ -113,6 +113,7 @@ class PathSegmentType(TypeBase):
     DOWN = 1  # Request/Reply for down-paths
     CORE = 2  # Request/Reply for core-paths
     GENERIC = 3  # FIXME(PSz): experimental for now.
+    SIBRA = 4  # Request/Reply for sibra steady paths
 
 
 class PCBType(TypeBase):

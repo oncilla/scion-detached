@@ -26,7 +26,7 @@ from ctypes import (addressof, byref, CDLL, c_int, c_short, c_size_t,
                     c_ubyte, c_uint, c_void_p, Structure)
 
 # SCION
-from lib.packet.scion_addr import ISD_AD
+from lib.packet.scion_addr import ISD_AS
 from lib.util import Raw
 
 ByteArray16 = c_ubyte * 16
@@ -40,18 +40,20 @@ class C_HostAddr(Structure):
 
 
 class C_SCIONAddr(Structure):
-    _fields_ = [("isd_ad", c_uint),
+    _fields_ = [("isd_as", c_uint),
                 ("host", C_HostAddr)]
 
 
 class SCIONInterface(object):
     """
-    Class representing interface info, i.e. ISD_AD + IFID
+    Class representing interface info, i.e. ISD_AS + IFID
 
-    :ivar int isd: ISD identifier
-    :ivar int ad: AD identifier
+    :ivar ISD_AS isd_as: ISD-AS identifier
     :ivar int ifid: Interface identifier
     """
+    NAME = "SCIONInterface"
+    LEN = ISD_AS.LEN + 2
+
     def __init__(self, raw=None):
         """
         Initialize an instance of the class SCIONInterface
@@ -59,8 +61,7 @@ class SCIONInterface(object):
         :param raw: Byte string representing interface info
         :type raw: bytes object
         """
-        self.isd = None
-        self.ad = None
+        self.isd_as = None
         self.ifid = None
         if raw:
             self._parse(raw)
@@ -72,10 +73,29 @@ class SCIONInterface(object):
         :param raw: Byte string representing interface info
         :type raw: bytes object
         """
-        data = Raw(raw, "Serialized SCION Interface", ISD_AD.LEN + 2)
-        isd_ad = ISD_AD.from_raw(data.pop(ISD_AD.LEN))
-        self.isd, self.ad = isd_ad.isd, isd_ad.ad
-        self.ifid = struct.unpack("H", data.pop())[0]
+        data = Raw(raw, self.NAME, self.LEN)
+        self.isd_as = ISD_AS(data.pop(ISD_AS.LEN))
+        self.ifid = struct.unpack("!H", data.pop())[0]
+
+    def __str__(self):
+        """
+        String representation of a SCIONInterface object.
+        :returns: The interface information as a string.
+        :rtype: str
+        """
+        return "(ISD-AS: %s IFID: %s)" % (self.isd_as, self.ifid)
+
+    def to_dict(self):
+        """
+        Represents and returns the interface as a dictionary.
+        :returns: SCION interface as a dictionary object.
+        :rtype: dict
+        """
+        result = {}
+        result["ISD"] = self.isd_as[0]
+        result["AS"] = self.isd_as[1]
+        result["IFID"] = self.ifid
+        return result
 
 
 class C_SCIONOption(Structure):
@@ -123,6 +143,7 @@ class ScionStats(object):
         data = Raw(raw, "Serialized SCION stats", self.FIXED_DATA_LEN, True)
         while len(data):
             values = data.pop(self.FIXED_DATA_LEN)
+            # The stats are native byte order
             rp, sp, ap, rtt, lr, ifc = struct.unpack("IIIIdI", values)
             self.received_packets.append(rp)
             self.sent_packets.append(sp)
@@ -133,7 +154,7 @@ class ScionStats(object):
             if ifc:
                 if_list = []
                 for j in range(ifc):
-                    saddr = SCIONInterface(data.pop(ISD_AD.LEN + 2))
+                    saddr = SCIONInterface(data.pop(ISD_AS.LEN + 2))
                     if_list.append(saddr)
                 self.if_lists.append(if_list)
 
@@ -144,11 +165,13 @@ class ScionStats(object):
         :rtype: str
         """
         result = []
-        result.append("Sent Packets: " + str(self.sent_packets))
-        result.append("Received Packets: " + str(self.received_packets))
-        result.append("Acked Packets: " + str(self.acked_packets))
-        result.append("RTTs: " + str(self.rtts))
-        result.append("Loss-Rates: " + str(self.loss_rates))
+        result.append("Sent Packets: %s" % self.sent_packets)
+        result.append("Received Packets: %s" % self.received_packets)
+        result.append("Acked Packets: %s" % self.acked_packets)
+        result.append("RTTs: %s" % self.rtts)
+        result.append("Loss-Rates: %s" % self.loss_rates)
+        result.append("IF Counts: %s" % self.if_counts)
+        result.append("IF Lists: %s" % self._if_lists_to_str())
         return "\n".join(result)
 
     def to_dict(self):
@@ -163,7 +186,25 @@ class ScionStats(object):
         result["acked_packets"] = self.acked_packets
         result["rtts"] = self.rtts
         result["loss_rates"] = self.loss_rates
+        result["if_counts"] = self.if_counts
+        iflists = []
+        for if_list in self.if_lists:
+            ifs = [iface.to_dict() for iface in if_list]
+            iflists.append(ifs)
+        result["if_lists"] = iflists
         return result
+
+    def _if_lists_to_str(self):
+        """
+        Converts self.if_lists into string.
+        :returns: self.if_lists as a string
+        :rtype: str
+        """
+        result = []
+        for if_list in self.if_lists:
+            ifs = [str(iface) for iface in if_list]
+            result.append("[ %s ]" % " ".join(ifs))
+        return "\n".join(result)
 
 
 SHARED_LIB_LOCATION = os.path.join("endhost", "ssp")
@@ -322,7 +363,7 @@ class ScionBaseSocket(object):
         if opttype in self.LONG_OPTIONS:
             return buf
         else:
-            return struct.pack("I", opt.val)
+            return struct.pack("!I", opt.val)
 
     def shutdown(self, how):
         """
@@ -397,24 +438,22 @@ class ScionClientSocket(ScionBaseSocket):
     """
     Client side wrapper of the SCION Multi-Path Socket.
     """
-
-    def __init__(self, proto, isd_ad, target_address):
+    def __init__(self, proto, isd_as, target_address):
         """
         :param proto: The type of SCION socket protocol to be used
         (see lib/defines).
         :type proto: int
-        :param isd_ad: ISD and AD tuple
-        :type isd_ad: int tuple
+        :param ISD_AS isd_as: ISD-AS
         :param target_address: The address of the server to connect to.
         :type target_address: (string, int) tuple
         """
         self.proto = proto
-        self.isd, self.ad = isd_ad
+        self.isd_as = isd_as
         self.target_IP, self.target_port = target_address
         self.libsock = CDLL(os.path.join(SHARED_LIB_LOCATION,
                                          SHARED_LIB_CLIENT))
         sa = C_SCIONAddr()
-        sa.isd_ad = c_uint(ISD_AD(self.isd, self.ad).int())
+        sa.isd_as = c_uint(self.isd_as.int())
         ip_bytes = ipaddress.ip_interface(self.target_IP).ip.packed
         sa.host.addrLen = len(ip_bytes)
         sa.host.addr = ByteArray16(*ip_bytes)

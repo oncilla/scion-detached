@@ -33,22 +33,24 @@ class Link(object):
     """
     The Link class handles steady path management on a single interface.
     """
-    def __init__(self, addr, sendq, iface):
+    def __init__(self, addr, sendq, signing_key, iface):
         """
         :param ScionAddr addr: the address of this sibra server
         :param queue.Queue sendq:
             packets written to this queue will be sent by the sibra server
             thread.
+        :param bytes signing_key: AS signing key.
         :param topology.InterfaceElement iface: the interface to manage.
         """
         self.addr = addr
         self.sendq = sendq
         self.iface = iface
-        self.neigh = iface.isd_ad()
+        self.signing_key = signing_key
+        self.neigh = iface.isd_as
         self.id = iface.if_id
-        self.state = SibraState(iface.bandwidth, self.addr.get_isd_ad())
+        self.state = SibraState(iface.bandwidth, self.addr.isd_as)
         self.segments = {}
-        self.parent = iface.neighbor_type == "PARENT"
+        self.parent = iface.link_type == "PARENT"
         self.steadies = {}
         self.lock = threading.Lock()
 
@@ -71,6 +73,11 @@ class Link(object):
                 logging.info("Adding segment for interface %s: %s",
                              self.id, pcb.short_desc())
             self.segments[hops] = pcb
+            self._update_seg_steadies(pcb)
+
+    def _update_seg_steadies(self, pcb):
+        for steady in self.steadies.values():
+            steady.update_seg(pcb)
 
     def steady_add(self):
         """
@@ -83,7 +90,8 @@ class Link(object):
         # FIXME(kormat): un-hardcode these bandwidths
         bwsnap = BWSnapshot(25 * 1024, 15 * 1024)
         with self.lock:
-            steady = SteadyPath(self.addr, self.sendq, self._pick_seg(), bwsnap)
+            steady = SteadyPath(self.addr, self.sendq, self.signing_key,
+                                self._pick_seg(), bwsnap)
             self.steadies[steady.id] = steady
             steady.setup()
 

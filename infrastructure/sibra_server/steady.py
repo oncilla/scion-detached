@@ -16,19 +16,22 @@
 ========================================
 """
 # Stdlib
+import copy
 import logging
 import threading
-from binascii import hexlify
 
 # SCION
+from lib.crypto.asymcrypto import sign
 from lib.defines import (
     SCION_UDP_PORT,
     SIBRA_MAX_IDX,
     SIBRA_MAX_STEADY_TICKS,
     SIBRA_TICK,
 )
+from infrastructure.sibra_server.util import seg_to_hops
 from lib.errors import SCIONBaseError
 from lib.packet.path import EmptyPath
+from lib.packet.path_mgmt import PathRecordsReg
 from lib.packet.scion import PacketType as PT
 from lib.packet.scion import SCIONL4Packet, build_base_hdrs
 from lib.packet.scion_addr import SCIONAddr
@@ -36,8 +39,11 @@ from lib.packet.scion_udp import SCIONUDPHeader
 from lib.sibra.ext.info import ResvInfoSteady
 from lib.sibra.ext.steady import SibraExtSteady
 from lib.sibra.payload import SIBRAPayload
+from lib.sibra.pcb_ext.info import SibraSegInfo
+from lib.sibra.pcb_ext.sof import SibraSegSOF
 from lib.sibra.util import current_tick, tick_to_time
-from lib.util import SCIONTime
+from lib.types import PathSegmentType as PST
+from lib.util import SCIONTime, hex_str
 
 RESV_LEN = SIBRA_MAX_STEADY_TICKS - 1
 STATE_SETUP = 0
@@ -52,24 +58,26 @@ class SteadyPath(object):
     """
     Class to manage a single steady path
     """
-    def __init__(self, addr, sendq, seg, bwsnap):
+    def __init__(self, addr, sendq, signing_key, seg, bwsnap):
         """
         :param ScionAddr addr: the address of this sibra server
         :param queue.Queue sendq:
             packets written to this queue will be sent by the sibra server
             thread.
+        :param bytes signing_key: AS signing key.
         :param PathSegment seg: path segment to use.
         :param BWSnapshot bwsnap: initial bandwidth to request.
         """
         self.addr = addr
         self.sendq = sendq
+        self.signing_key = signing_key
         self.seg = seg
         self.bw = bwsnap.to_classes().ceil()
-        self.id = SibraExtSteady.mk_path_id(self.addr.get_isd_ad())
+        self.id = SibraExtSteady.mk_path_id(self.addr.isd_as)
         self.idx = 0
         self.blocks = []
         first = self.seg.get_first_pcbm()
-        self.remote = first.get_isd_ad()
+        self.remote = first.isd_as
         self._lock = threading.RLock()
         self.state = STATE_SETUP
 
@@ -102,6 +110,14 @@ class SteadyPath(object):
         pkt = self._create_sibra_pkt(ext)
         self.sendq.put(pkt)
 
+    def update_seg(self, new_seg):
+        with self._lock:
+            old_hops = seg_to_hops(self.seg)
+            new_hops = seg_to_hops(new_seg)
+            if old_hops != new_hops:
+                return
+            self.seg = new_seg
+
     def process_reply(self, pkt, ext):
         with self._lock:
             self._process_reply(pkt, ext)
@@ -119,6 +135,7 @@ class SteadyPath(object):
                 self.state = STATE_RUNNING
             else:
                 logging.debug("Renewal successful: %s", ext.req_block.info)
+            self._register_path()
             return
         req_bw = ext.req_block.info.bw
         self.bw = ext.get_min_offer()
@@ -186,7 +203,7 @@ class SteadyPath(object):
         """
         Create headers for a SCION packet
         """
-        dest = SCIONAddr.from_values(self.remote[0], self.remote[1], PT.SB_PKT)
+        dest = SCIONAddr.from_values(self.remote, PT.SB_PKT)
         cmn_hdr, addr_hdr = build_base_hdrs(self.addr, dest)
         payload = SIBRAPayload()
         udp_hdr = SCIONUDPHeader.from_values(
@@ -211,6 +228,42 @@ class SteadyPath(object):
         return SCIONL4Packet.from_values(
             cmn_hdr, addr_hdr, EmptyPath(), [ext], udp_hdr, payload)
 
+    def _register_path(self):
+        pld = self._create_reg_pld()
+        pkt = self._create_reg_pkt(pld)
+        logging.debug("Registering path with local path server")
+        self.sendq.put(pkt)
+        pkt = self._create_reg_pkt(pld, self.remote, self.seg.get_path(True))
+        logging.debug("Registering path with core path server in %s",
+                      self.remote)
+        self.sendq.put(pkt)
+
+    def _create_reg_pld(self):
+        pcb = copy.deepcopy(self.seg)
+        # TODO(kormat): It might make sense to remove peer markings also, but
+        # they might also be needed for sibra steady paths that traverse peer
+        # links in the future.
+        pcb.remove_signatures()
+        latest = self.blocks[-1]
+        for asm, sof in zip(reversed(pcb.ases), latest.sofs):
+            asm.add_ext(SibraSegSOF.from_values(sof))
+        last_asm = pcb.ases[-1]
+        last_asm.add_ext(SibraSegInfo.from_values(self.id, latest.info))
+        last_asm.sig = sign(pcb.pack(), self.signing_key)
+        return PathRecordsReg.from_values({PST.SIBRA: [pcb]})
+
+    def _create_reg_pkt(self, pld, dest_ia=None, path=None):
+        if not dest_ia:
+            dest_ia = self.addr.isd_as
+        if not path:
+            path = EmptyPath()
+        dest = SCIONAddr.from_values(dest_ia, PT.PATH_MGMT)
+        cmn_hdr, addr_hdr = build_base_hdrs(self.addr, dest)
+        udp_hdr = SCIONUDPHeader.from_values(
+            self.addr, SCION_UDP_PORT, dest, SCION_UDP_PORT, pld)
+        return SCIONL4Packet.from_values(
+            cmn_hdr, addr_hdr, path, [], udp_hdr, pld)
+
     def __str__(self):
         with self._lock:
             if self.blocks:
@@ -218,4 +271,4 @@ class SteadyPath(object):
             else:
                 act_info = "(No active blocks)"
             return "SteadyPath %s to %s: %s" % (
-                hexlify(self.id).decode("ascii"), self.remote, act_info)
+                hex_str(self.id), self.remote, act_info)

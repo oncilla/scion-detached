@@ -89,7 +89,6 @@ import logging
 import os
 import socket
 import threading
-from binascii import hexlify
 from http.client import HTTPMessage
 from urllib.parse import urlparse, urlunparse
 
@@ -98,8 +97,9 @@ from endhost.scion_socket import ScionServerSocket, ScionClientSocket
 from endhost.socket_kbase import SocketKnowledgeBase
 from lib.defines import L4_SSP
 from lib.log import init_logging, log_exception
+from lib.packet.scion_addr import ISD_AS
 from lib.thread import thread_safety_net
-from lib.util import handle_signals
+from lib.util import handle_signals, hex_str
 
 VERSION = '0.1.0'
 BUFLEN = 8192
@@ -335,7 +335,7 @@ class ForwardingProxyConnectionHandler(ConnectionHandler):
     server_version = "SCION HTTP Bridge Proxy/" + VERSION
     unix_target_proxy = '127.0.0.1', 9090
     scion_target_proxy = '127.2.26.254', 9090
-    isd_ad = 2, 26
+    isd_as = ISD_AS.from_values(2, 26)
 
     def __init__(self, connection, address, conn_id, scion_mode, kbase):
         """
@@ -383,7 +383,7 @@ class ForwardingProxyConnectionHandler(ConnectionHandler):
         """
         if self.scion_mode:
             logging.info("Opening a SCION-socket")
-            soc = ScionClientSocket(L4_SSP, self.isd_ad,
+            soc = ScionClientSocket(L4_SSP, self.isd_as,
                                     self.scion_target_proxy)
             if self.socket_kbase is not None:
                 self.socket_kbase.add_socket(soc, self.method, self.path)
@@ -426,7 +426,7 @@ def serve_forever(soc, bridge_mode, scion_mode, kbase):
     """
     while True:
         con, addr = soc.accept()
-        conn_id = hexlify(os.urandom(CONN_ID_BYTES)).decode("ascii")
+        conn_id = hex_str(os.urandom(CONN_ID_BYTES))
         if bridge_mode:
             params = (ForwardingProxyConnectionHandler, con, addr, conn_id,
                       scion_mode, kbase)
@@ -474,11 +474,11 @@ def main():
 
     if args.forward:
         init_logging(LOG_BASE + "_forward", file_level=logging.DEBUG,
-                     console_level=logging.DEBUG)
+                     console_level=logging.INFO)
         logging.info("Operating in forwarding (bridge) mode.")
     else:
         init_logging(LOG_BASE, file_level=logging.DEBUG,
-                     console_level=logging.DEBUG)
+                     console_level=logging.INFO)
         logging.info("Operating in normal proxy mode.")
 
     kbase = None

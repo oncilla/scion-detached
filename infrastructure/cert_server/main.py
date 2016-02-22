@@ -22,17 +22,11 @@ import logging
 import threading
 
 # External packages
-import struct
-
-import sys
 from Crypto.Hash import SHA256
 
 # SCION
-from nacl.public import PrivateKey
-
 from infrastructure.scion_elem import SCIONElement
 from lib.crypto.asymcrypto import encrypt_session_key, sign
-from lib.crypto.certificate import Certificate, CertificateChain
 from lib.crypto.symcrypto import compute_session_key
 from lib.defines import CERTIFICATE_SERVICE, SCION_UDP_PORT
 from lib.errors import SCIONParseError
@@ -48,8 +42,9 @@ from lib.packet.drkey import (
     DRKeyRequestKey,
     DRKeyReplyKey
 )
-from lib.packet.scion import PacketType as PT, SCIONL4Packet, SCIONAddrHdr
 from lib.packet.scion_addr import SCIONAddr
+from lib.packet.scion import PacketType as PT, SCIONL4Packet
+from lib.packet.scion_addr import ISD_AS
 from lib.requests import RequestHandler
 from lib.thread import thread_safety_net
 from lib.types import CertMgmtType, DRKeyType as DRKT, PayloadClass
@@ -106,10 +101,10 @@ class CertServer(SCIONElement):
         if not is_sim:
             # Add more IPs here if we support dual-stack
             name_addrs = "\0".join([self.id, str(SCION_UDP_PORT),
-                                    str(self.addr.host_addr)])
+                                    str(self.addr.host)])
             self.zk = Zookeeper(
-                self.topology.isd_id, self.topology.ad_id, CERTIFICATE_SERVICE,
-                name_addrs, self.topology.zookeepers)
+                self.topology.isd_as, CERTIFICATE_SERVICE, name_addrs,
+                self.topology.zookeepers)
             self.zk.retry("Joining party", self.zk.party_setup)
             self.trc_cache = ZkSharedCache(self.zk, self.ZK_TRC_CACHE_PATH,
                                            self._cached_entries_handler)
@@ -185,19 +180,18 @@ class CertServer(SCIONElement):
                                                pkt_hash))
 
     def _send_reply(self, src, src_port, payload):
-        if (src.isd_id, src.ad_id) == self.addr.get_isd_ad():
+        if src.isd_as == self.addr.isd_as:
             # Local request
-            next_hop = src.host_addr
+            next_hop = src.host
             port = src_port
         else:
             # Remote request
-            next_hop = self._get_next_hop(src.isd_id, src.ad_id, False, True,
-                                          True)
+            next_hop = self._get_next_hop(src.isd_as, False, True, True)
             port = SCION_UDP_PORT
 
         if next_hop:
-            rep_pkt = self._build_packet(PT.CERT_MGMT, dst_isd=src.isd_id,
-                                         dst_ad=src.ad_id, payload=payload)
+            rep_pkt = self._build_packet(
+                PT.CERT_MGMT, dst_ia=src.isd_as, payload=payload)
             self.send(rep_pkt, next_hop, port)
         else:
             logging.warning("Reply not sent: no destination found")
@@ -207,14 +201,14 @@ class CertServer(SCIONElement):
         Process a certificate chain request.
 
         :param pkt: DRKey request packet.
-        :type pkt: # DRKeyRequestKey
+        :type pkt: SCIONL4Packet
         """
         drkey_request = pkt.get_payload()
         logging.debug("Processing DRKEY request - cert: %s", str(drkey_request))
         hop = drkey_request.hop
         assert isinstance(drkey_request, DRKeyRequestKey)
         self.drkey_requests.put(
-            ((drkey_request.session_id, drkey_request.public_key), (pkt.addrs.get_src_addr(), pkt.l4_hdr.src_port, hop))
+            ((drkey_request.session_id, drkey_request.public_key), (pkt.addrs.src, pkt.l4_hdr.src_port, hop))
         )
 
     def _check_drkey(self, key):
@@ -248,15 +242,14 @@ class CertServer(SCIONElement):
         msg = b"".join(packed)
 
         signature = sign(msg, private_key)
-        cert_chain = self.trust_store.get_cert(self.addr.get_isd_ad().isd, self.addr.get_isd_ad().ad)
+        cert_chain = self.trust_store.get_cert(self.addr.isd_as)
         # logging.debug("%s", str(cert_chain))
 
         drkey_reply = DRKeyReplyKey.from_values(hop, session_id, enc_session_key, signature, cert_chain)
 
-        pkt = self._build_packet(src.host_addr, dst_isd=src.isd_id, dst_ad=src.ad_id, payload=drkey_reply, dst_port=port)
-        self.send(pkt, src.host_addr, port)
+        pkt = self._build_packet(src.host, dst_ia=src.isd_as, payload=drkey_reply, dst_port=port)
+        self.send(pkt, src.host, port)
         logging.debug("Replied DRKey request with %s", str(drkey_reply))
-
 
     def process_cert_chain_request(self, pkt):
         """
@@ -268,17 +261,14 @@ class CertServer(SCIONElement):
         cc_req = pkt.get_payload()
         assert isinstance(cc_req, CertChainRequest)
         logging.info("Cert chain request received for %s", cc_req.short_desc())
-        key = cc_req.isd_id, cc_req.ad_id, cc_req.version
-        local = (pkt.addrs.src_isd, pkt.addrs.src_ad) == self.addr.get_isd_ad()
+        key = cc_req.isd_as, cc_req.version
+        local = pkt.addrs.src.isd_as == self.addr.isd_as
         if not self._check_cc(key) and not local:
             logging.warning(
-                "Dropping CC request from (%s, %s, %s) for %s-%sv%s: "
+                "Dropping CC request from %s for %sv%s: "
                 "CC not found && requester is not local)",
-                pkt.addrs.src_isd, pkt.addrs.src_ad, pkt.addrs.src_addr, *key
-            )
-        self.cc_requests.put((
-            key, (pkt.addrs.get_src_addr(), pkt.l4_hdr.src_port),
-        ))
+                pkt.addrs.src, *key)
+        self.cc_requests.put((key, (pkt.addrs.src, pkt.l4_hdr.src_port)))
 
     def process_cert_chain_reply(self, pkt, from_zk=False):
         """
@@ -295,20 +285,20 @@ class CertServer(SCIONElement):
         if not from_zk:
             self._share_object(pkt, is_trc=False)
         # Reply to all requests for this certificate chain
-        self.cc_requests.put((cc_rep.cert_chain.get_leaf_isd_ad_ver(), None))
+        self.cc_requests.put((cc_rep.cert_chain.get_leaf_isd_as_ver(), None))
 
     def _check_cc(self, key):
         cert_chain = self.trust_store.get_cert(*key)
         if cert_chain:
             return True
-        logging.debug('Cert chain not found for %s-%sv%s', *key)
+        logging.debug('Cert chain not found for %sv%s', *key)
         return False
 
     def _fetch_cc(self, key, _):
-        isd, ad, ver = key
-        cc_req = CertChainRequest.from_values(isd, ad, ver)
+        isd_as, ver = key
+        cc_req = CertChainRequest.from_values(isd_as, ver)
         req_pkt = self._build_packet(PT.CERT_MGMT, payload=cc_req)
-        dst_addr = self._get_next_hop(isd, ad, True)
+        dst_addr = self._get_next_hop(isd_as, True)
         if dst_addr:
             self.send(req_pkt, dst_addr)
             logging.info("Cert chain request sent for %s", cc_req.short_desc())
@@ -317,12 +307,12 @@ class CertServer(SCIONElement):
                             "no destination found", cc_req.short_desc())
 
     def _reply_cc(self, key, info):
-        isd, ad, ver = key
+        isd_as, ver = key
         src, port = info
-        cert_chain = self.trust_store.get_cert(isd, ad, ver)
+        cert_chain = self.trust_store.get_cert(isd_as, ver)
         self._send_reply(src, port, CertChainReply.from_values(cert_chain))
-        logging.info("Cert chain for %s-%sv%s sent to %s:%s", isd, ad, ver, src,
-                     port)
+        logging.info("Cert chain for %sv%s sent to %s:%s",
+                     isd_as, ver, src, port)
 
     def process_trc_request(self, pkt):
         """
@@ -333,18 +323,16 @@ class CertServer(SCIONElement):
         """
         trc_req = pkt.get_payload()
         assert isinstance(trc_req, TRCRequest)
-        logging.info("TRC request received for %sv%s", trc_req.isd_id,
-                     trc_req.version)
-        key = trc_req.isd_id, trc_req.version
-        local = (pkt.addrs.src_isd, pkt.addrs.src_ad) == self.addr.get_isd_ad()
+        key = trc_req.isd_as[0], trc_req.version
+        logging.info("TRC request received for %sv%s", *key)
+        local = pkt.addrs.src.isd_as == self.addr.isd_as
         if not self._check_trc(key) and not local:
             logging.warning(
-                "Dropping TRC request from (%s, %s, %s) for %sv%s: "
+                "Dropping TRC request from %s for %sv%s: "
                 "TRC not found && requester is not local)",
-                pkt.addrs.src_isd, pkt.addrs.src_ad, pkt.addrs.src_addr, *key
-            )
+                pkt.addrs.src, *key)
         self.trc_requests.put((
-            key, (pkt.addrs.get_src_addr(), pkt.l4_hdr.src_port, trc_req.ad_id),
+            key, (pkt.addrs.src, pkt.l4_hdr.src_port, trc_req.isd_as[1]),
         ))
 
     def process_trc_reply(self, pkt, from_zk=False):
@@ -374,10 +362,10 @@ class CertServer(SCIONElement):
 
     def _fetch_trc(self, key, info):
         isd, ver = key
-        ad = info[2]
-        trc_req = TRCRequest.from_values(isd, ad, ver)
+        isd_as = ISD_AS.from_values(isd, info[2])
+        trc_req = TRCRequest.from_values(isd_as, ver)
         req_pkt = self._build_packet(PT.CERT_MGMT, payload=trc_req)
-        next_hop = self._get_next_hop(isd, ad, True, False, True)
+        next_hop = self._get_next_hop(isd_as, True, False, True)
         if next_hop:
             self.send(req_pkt, next_hop)
             logging.info("TRC request sent for %sv%s.", *key)
@@ -392,7 +380,7 @@ class CertServer(SCIONElement):
         self._send_reply(src, port, TRCReply.from_values(trc))
         logging.info("TRC for %sv%s sent to %s:%s", isd, ver, src, port)
 
-    def _get_next_hop(self, isd, ad, parent=False, child=False, routing=False):
+    def _get_next_hop(self, isd_as, parent=False, child=False, routing=False):
         routers = []
         if parent:
             routers += self.topology.parent_edge_routers
@@ -401,9 +389,8 @@ class CertServer(SCIONElement):
         if routing:
             routers += self.topology.routing_edge_routers
         for r in routers:
-            if isd != r.interface.neighbor_isd:
-                continue
-            if ad in (r.interface.neighbor_ad, 0):
+            r_ia = r.interface.isd_as
+            if (isd_as == r_ia) or (isd_as[0] == r_ia[0] and isd_as[1] == 0):
                 return r.addr
         return None
 

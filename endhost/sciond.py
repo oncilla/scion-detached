@@ -29,7 +29,6 @@ from nacl.utils import random as random_bytes
 
 from infrastructure.scion_elem import SCIONElement
 from lib.crypto.asymcrypto import decrypt_session_key, sign
-from lib.crypto.certificate import Certificate
 from lib.crypto.hash_chain import HashChain
 from lib.crypto.symcrypto import compute_session_key
 from lib.defines import PATH_SERVICE, SCION_UDP_PORT
@@ -39,8 +38,8 @@ from lib.packet.drkey import DRKeyRequestKey, DRKeyReplyKey, DRKeyAcknowledgeKey
 from lib.packet.host_addr import haddr_parse, HostAddrIPv4
 from lib.packet.path import EmptyPath, PathCombinator, PathBase
 from lib.packet.path_mgmt import PathSegmentInfo
-from lib.packet.scion_addr import ISD_AD, SCIONAddr
-from lib.path_db import PathSegmentDB
+from lib.packet.scion_addr import ISD_AS, SCIONAddr
+from lib.path_db import DBResult, PathSegmentDB
 from lib.requests import RequestHandler
 from lib.packet.scion import PacketType as PT, SCIONL4Packet
 from lib.socket import UDPSocket
@@ -85,13 +84,11 @@ class SCIONDaemon(SCIONElement):
         self.core_segments = PathSegmentDB(segment_ttl=self.SEGMENT_TTL,
                                            max_res_no=self.MAX_SEG_NO)
         self.requests = RequestHandler.start(
-            "SCIONDaemon Requests", self._check_segments, self._fetch_segments,
+            "SCIONDaemon Requests", self.path_resolution, self._fetch_segments,
             self._reply_segments, ttl=self.TIMEOUT, key_map=self._req_key_map,
         )
         self._api_socket = None
         self.daemon_thread = None
-        self._in_core = self.addr.get_isd_ad() in self._core_ads[
-            self.addr.isd_id]
 
         self.PLD_CLASS_MAP = {
             PayloadClass.PATH: {
@@ -137,7 +134,7 @@ class SCIONDaemon(SCIONElement):
 
         Example of usage:
         sd = SCIONDaemon.start(conf_dir, addr)
-        paths = sd.get_paths(isd_id, ad_id)
+        paths = sd.get_paths(isd_as)
         """
         sd = cls(conf_dir, addr, api_addr, run_local_api, port, is_sim)
         sd.daemon_thread = threading.Thread(
@@ -157,7 +154,7 @@ class SCIONDaemon(SCIONElement):
     def handle_request(self, packet, sender, from_local_socket=True):
         # PSz: local_socket may be misleading, especially that we have
         # api_socket which is local (in the localhost sense). What do you think
-        # about changing local_socket to ad_socket
+        # about changing local_socket to as_socket
         """
         Main routine to handle incoming SCION packets.
         """
@@ -172,44 +169,37 @@ class SCIONDaemon(SCIONElement):
         """
         added = set()  # Set of added destinations.
         path_reply = pkt.get_payload()
-        for seg_type, pcbs in path_reply.pcbs.items():
-            for pcb in pcbs:
-                first = pcb.get_first_pcbm()
-                last = pcb.get_last_pcbm()
-                if seg_type == PST.UP:
-                    self._handle_up_seg(pcb, first, last)
-                    added.add(first.get_isd_ad())
-                elif seg_type == PST.DOWN:
-                    self._handle_down_seg(pcb, first, last)
-                    added.add(last.get_isd_ad())
-                elif seg_type == PST.CORE:
-                    self._handle_core_seg(pcb, first, last)
-                    added.add(first.get_isd_ad())
-                else:
-                    logging.warning(
-                        "Incorrect path in Path Record. Type: %s PCB: %s",
-                        seg_type, pcb.short_desc())
+        for pcb in path_reply.pcbs[PST.UP]:
+            added.update(self._handle_up_seg(pcb))
+        for pcb in path_reply.pcbs[PST.DOWN]:
+            added.update(self._handle_down_seg(pcb))
+        for pcb in path_reply.pcbs[PST.CORE]:
+            added.update(self._handle_core_seg(pcb))
         for key in added:
             self.requests.put((key, None))
 
-    def _handle_up_seg(self, pcb, first, last):
-        if self.addr.get_isd_ad() != (last.isd_id, last.ad_id):
-            return
-        self.up_segments.update(pcb, first.isd_id, first.ad_id,
-                                last.isd_id, last.ad_id)
-        logging.debug("Up path added: %s", pcb.short_desc())
+    def _handle_up_seg(self, pcb):
+        first_ia = pcb.get_first_pcbm().isd_as
+        last_ia = pcb.get_last_pcbm().isd_as
+        if self.addr.isd_as != last_ia:
+            return set()
+        if self.up_segments.update(pcb) == DBResult.ENTRY_ADDED:
+            logging.debug("Up path added: %s", pcb.short_desc())
+        return set([first_ia])
 
-    def _handle_down_seg(self, pcb, first, last):
-        if self.addr.get_isd_ad() == (last.isd_id, last.ad_id):
-            return
-        self.down_segments.update(pcb, first.isd_id, first.ad_id,
-                                  last.isd_id, last.ad_id)
-        logging.debug("Down path added: %s", pcb.short_desc())
+    def _handle_down_seg(self, pcb):
+        last_ia = pcb.get_last_pcbm().isd_as
+        if self.addr.isd_as == last_ia:
+            return set()
+        if self.down_segments.update(pcb) == DBResult.ENTRY_ADDED:
+            logging.debug("Down path added: %s", pcb.short_desc())
+        return set([last_ia])
 
-    def _handle_core_seg(self, pcb, first, last):
-        self.core_segments.update(pcb, first.isd_id, first.ad_id,
-                                  last.isd_id, last.ad_id)
-        logging.debug("Core path added: %s", pcb.short_desc())
+    def _handle_core_seg(self, pcb):
+        first_ia = pcb.get_first_pcbm().isd_as
+        if self.core_segments.update(pcb) == DBResult.ENTRY_ADDED:
+            logging.debug("Core path added: %s", pcb.short_desc())
+        return set([first_ia])
 
     def api_handle_request(self, packet, sender):
         """
@@ -229,7 +219,7 @@ class SCIONDaemon(SCIONElement):
     def _api_handle_path_request(self, packet, sender):
         """
         Path request:
-          | \x00 (1B) | ISD (12bits) |  AD (20bits)  |
+          | \x00 (1B) | ISD (12bits) |  AS (20bits)  |
         Reply:
           |p1_len(1B)|p1((p1_len*8)B)|fh_IP(4B)|fh_port(2B)|mtu(2B)|
            p1_if_count(1B)|p1_if_1(5B)|...|p1_if_n(5B)|
@@ -238,8 +228,8 @@ class SCIONDaemon(SCIONElement):
 
         FIXME(kormat): make IP-version independant
         """
-        isd, ad = ISD_AD.from_raw(packet[1:ISD_AD.LEN + 1])
-        paths = self.get_paths(isd, ad)
+        dst_ia = ISD_AS(packet[1:ISD_AS.LEN + 1])
+        paths = self.get_paths(dst_ia)
         reply = []
         for path in paths:
             raw_path = path.pack()
@@ -249,15 +239,14 @@ class SCIONDaemon(SCIONElement):
             # TODO(PSz): remove dummy "0.0.0.0" address when API is saner
             haddr = self.ifid2addr.get(fwd_if, haddr_parse("IPV4", "0.0.0.0"))
             path_len = len(raw_path) // 8
-            reply.append(struct.pack("B", path_len) + raw_path +
-                         haddr.pack() + struct.pack("H", SCION_UDP_PORT) +
-                         struct.pack("H", path.mtu) +
-                         struct.pack("B", len(path.interfaces)))
+            reply.append(struct.pack("!B", path_len) + raw_path +
+                         haddr.pack() + struct.pack("!H", SCION_UDP_PORT) +
+                         struct.pack("!H", path.mtu) +
+                         struct.pack("!B", len(path.interfaces)))
             for interface in path.interfaces:
-                (isd_ad, link) = interface
-                isd_ad_bits = (isd_ad.isd << 20) + (isd_ad.ad & 0xFFFFF)
-                reply.append(struct.pack("I", isd_ad_bits))
-                reply.append(struct.pack("H", link))
+                isd_as, link = interface
+                reply.append(isd_as.pack())
+                reply.append(struct.pack("!H", link))
         self._api_sock.send(b"".join(reply), sender)
 
     def handle_revocation(self, pkt):
@@ -303,102 +292,92 @@ class SCIONDaemon(SCIONElement):
 
         return db.delete_all(to_remove)
 
-    def get_paths(self, dst_isd, dst_ad, requester=None):
+    def get_paths(self, dst_ia, requester=None):
         """
         Return a list of paths.
         The requester argument holds the address of requester. Used in simulator
         to send path reply.
 
-        :param int dst_isd: ISD identifier.
-        :param int dst_ad: AD identifier.
+        :param ISD_AS dst_ia: ISD-AS of the destination.
         :param requester: Path requester address(used in simulator).
         """
-        key = dst_isd, dst_ad
-        logging.debug("Paths requested for %s", key)
-        if self.addr.isd_id == dst_isd:
-            if self.addr.ad_id == dst_ad or (self._in_core and not dst_ad):
-                return [EmptyPath()]
+        logging.debug("Paths requested for %s", dst_ia)
+        if self.addr.isd_as == dst_ia or (
+                self.addr.isd_as.any_as() == dst_ia and
+                self.topology.is_core_as):
+            # Either the destination is the local AS, or the destination is any
+            # core AS in this ISD, and the local AS is in the core
+            return [EmptyPath()]
         deadline = SCIONTime.get_time() + self.TIMEOUT
         e = threading.Event()
-        self.requests.put((key, e))
+        self.requests.put((dst_ia, e))
         if not self._wait_for_events([e], deadline):
-            logging.error("Query timed out for %s", key)
+            logging.error("Query timed out for %s", dst_ia)
             return []
-        return self.path_resolution(dst_isd, dst_ad)
+        return self.path_resolution(dst_ia)
 
-    def path_resolution(self, dst_isd, dst_ad):
-        # dst_ad = 0 means any core AS in the specified ISD.
-        dst_is_core = (
-            (dst_isd, dst_ad) in self._core_ads[dst_isd] or not dst_ad)
-        if self._in_core:
-            return self._resolve_core(dst_isd, dst_ad, dst_is_core)
+    def path_resolution(self, dst_ia):
+        # dst as == 0 means any core AS in the specified ISD.
+        dst_is_core = self._is_core_as(dst_ia) or dst_ia[1] == 0
+        if self.topology.is_core_as:
+            return self._resolve_core(dst_ia, dst_is_core)
         elif dst_is_core:  # I'm non core AS, but dst is core.
-            return self._resolve_not_core_core(dst_isd, dst_ad)
+            return self._resolve_not_core_core(dst_ia)
         else:  # Me and dst are non-core.
-            return self._resolve_not_core_not_core(dst_isd, dst_ad)
+            return self._resolve_not_core_not_core(dst_ia)
 
-    def _resolve_core(self, dst_isd, dst_ad, dst_is_core):
+    def _resolve_core(self, dst_ia, dst_is_core):
         """
         I'm within core AS.
         """
         res = set()
-        my_isd, my_ad = self.addr.get_isd_ad()
         if dst_is_core:
-            my_isd, my_ad = self.addr.get_isd_ad()
-            params = {"last_isd": my_isd, "last_ad": my_ad,
-                      "first_isd": dst_isd}
-            if dst_ad:
-                # dst_ad=0 means any core AS in the specified ISD, so only
-                # filter on the remote AS if it isn't 0
-                params["first_ad"] = dst_ad
+            params = {"last_ia": self.addr.isd_as}
+            params.update(dst_ia.params())
             for cseg in self.core_segments(**params):
                 res.add((None, cseg, None))
             return PathCombinator.tuples_to_full_paths(res)
 
         # Dst is non core AS.
         # First check whether there is a direct path.
-        for dseg in self.down_segments(first_isd=my_isd, first_ad=my_ad,
-                                       last_isd=dst_isd, last_ad=dst_ad):
+        for dseg in self.down_segments(
+                first_ia=self.addr.isd_as, last_ia=dst_ia):
             res.add((None, None, dseg))
         # Check core-down combination.
-        for dseg in self.down_segments(last_isd=dst_isd, last_ad=dst_ad):
-            isd, ad = dseg.get_first_isd_ad()
-            if (my_isd, my_ad) == (isd, ad):
+        for dseg in self.down_segments(last_ia=dst_ia):
+            dseg_ia = dseg.get_first_pcbm().isd_as
+            if self.addr.isd_as == dseg_ia:
                 pass
-            for cseg in self.core_segments(first_isd=isd, first_ad=ad,
-                                           last_isd=my_isd, last_ad=my_ad):
+            for cseg in self.core_segments(
+                    first_ia=dseg_ia, last_ia=self.addr.isd_as):
                 res.add((None, cseg, dseg))
         return PathCombinator.tuples_to_full_paths(res)
 
-    def _resolve_not_core_core(self, dst_isd, dst_ad):
+    def _resolve_not_core_core(self, dst_ia):
         """
         I'm within non-core AS, but dst is within core AS.
         """
         res = set()
-        params = {"first_isd": dst_isd}
-        if dst_ad:
-            # dst_ad=0 means any core AS in the specified ISD, so only filter
-            # on AS when dst_ad is not 0.
-            params["first_ad"] = dst_ad
-        if dst_isd == self.addr.isd_id:
+        params = dst_ia.params()
+        if dst_ia[0] == self.addr.isd_as[0]:
             # Dst in local ISD. First check whether DST is a (super)-parent.
             for useg in self.up_segments(**params):
                 res.add((useg, None, None))
         # Check whether dst is known core AS.
         for cseg in self.core_segments(**params):
             # Check do we have an up-seg that is connected to core_seg.
-            isd, ad = cseg.get_last_isd_ad()
-            for useg in self.up_segments(first_isd=isd, first_ad=ad):
+            cseg_ia = cseg.get_last_pcbm().isd_as
+            for useg in self.up_segments(first_ia=cseg_ia):
                 res.add((useg, cseg, None))
         return PathCombinator.tuples_to_full_paths(res)
 
-    def _resolve_not_core_not_core(self, dst_isd, dst_ad):
+    def _resolve_not_core_not_core(self, dst_ia):
         """
         I'm within non-core AS and dst is within non-core AS.
         """
         up_segs = self.up_segments()
-        down_segs = self.down_segments(last_isd=dst_isd, last_ad=dst_ad)
-        core_segs, _ = self._calc_core_segs(dst_isd, up_segs, down_segs)
+        down_segs = self.down_segments(last_ia=dst_ia)
+        core_segs, _ = self._calc_core_segs(dst_ia[0], up_segs, down_segs)
         full_paths = PathCombinator.build_shortcut_paths(up_segs, down_segs)
         for up_seg in up_segs:
             for down_seg in down_segs:
@@ -417,27 +396,18 @@ class SCIONDaemon(SCIONElement):
                 count += 1
         return count
 
-    def _check_segments(self, key):
-        """
-        Called by RequestHandler to check if a given path request can be
-        fulfilled.
-        """
-        dst_isd, dst_ad = key
-        return self.path_resolution(dst_isd, dst_ad)
-
     def _fetch_segments(self, key, _):
         """
         Called by RequestHandler to fetch the requested path.
         """
-        dst_isd, dst_ad = key
-        my_isd, my_ad = self.addr.get_isd_ad()
+        dst_ia = key
         try:
             ps = self.dns_query_topo(PATH_SERVICE)[0]
         except SCIONServiceLookupError:
             log_exception("Error querying path service:")
             return
-        info = PathSegmentInfo.from_values(PST.GENERIC, my_isd,
-                                           my_ad, dst_isd, dst_ad)
+        info = PathSegmentInfo.from_values(
+            PST.GENERIC, self.addr.isd_as, dst_ia)
         logging.debug("Sending path request: %s", info.short_desc())
         path_request = self._build_packet(ps, payload=info)
         self.send(path_request, ps)
@@ -453,49 +423,49 @@ class SCIONDaemon(SCIONElement):
         Called by RequestHandler to know which requests can be answered by
         `key`.
         """
-        dst_isd, dst_ad = key
+        dst_ia = key
         ret = []
-        for rk in req_keys:
-            if (rk == key) or (rk == (key[0], 0)):
-                # Covers the case where a request was for ISD,0 (i.e. any path
+        for req_ia in req_keys:
+            if (req_ia == dst_ia) or (req_ia == dst_ia.any_as()):
+                # Covers the case where a request was for ISD-0 (i.e. any path
                 # to a core AS in the specified ISD)
-                ret.append(rk)
+                ret.append(req_ia)
         return ret
 
     def _calc_core_segs(self, dst_isd, up_segs, down_segs):
         """
         Calculate all possible core segments joining the provided up and down
         segments. Returns a list of all known segments, and a seperate list of
-        the missing AD pairs.
+        the missing AS pairs.
         """
-        src_core_ads = set()
-        dst_core_ads = set()
+        src_core_ases = set()
+        dst_core_ases = set()
         for seg in up_segs:
-            src_core_ads.add(seg.get_first_pcbm().ad_id)
+            src_core_ases.add(seg.get_first_pcbm().isd_as[1])
         for seg in down_segs:
-            dst_core_ads.add(seg.get_first_pcbm().ad_id)
-        # Generate all possible AD pairs
-        ad_pairs = list(product(src_core_ads, dst_core_ads))
-        return self._find_core_segs(self.addr.isd_id, dst_isd, ad_pairs)
+            dst_core_ases.add(seg.get_first_pcbm().isd_as[1])
+        # Generate all possible AS pairs
+        as_pairs = list(product(src_core_ases, dst_core_ases))
+        return self._find_core_segs(self.addr.isd_as[0], dst_isd, as_pairs)
 
-    def _find_core_segs(self, src_isd, dst_isd, ad_pairs):
+    def _find_core_segs(self, src_isd, dst_isd, as_pairs):
         """
-        Given a set of AD pairs across 2 ISDs, return the core segments
-        connecting those pairs, and a list of AD pairs for which a core segment
+        Given a set of AS pairs across 2 ISDs, return the core segments
+        connecting those pairs, and a list of AS pairs for which a core segment
         wasn't found.
         """
         core_segs = []
         missing = []
-        for src_core_ad, dst_core_ad in ad_pairs:
-            if (src_isd, src_core_ad) == (dst_isd, dst_core_ad):
+        for src_core_as, dst_core_as in as_pairs:
+            src_ia = ISD_AS.from_values(src_isd, src_core_as)
+            dst_ia = ISD_AS.from_values(dst_isd, dst_core_as)
+            if src_ia == dst_ia:
                 continue
-            seg = self.core_segments(
-                last_isd=src_isd, last_ad=src_core_ad,
-                first_isd=dst_isd, first_ad=dst_core_ad)
+            seg = self.core_segments(first_ia=dst_ia, last_ia=src_ia)
             if seg:
                 core_segs.extend(seg)
             else:
-                missing.append((src_core_ad, dst_core_ad))
+                missing.append((src_core_as, dst_core_as))
         return core_segs, missing
 
     def _check_drkeys(self, session_id):
@@ -530,9 +500,9 @@ class SCIONDaemon(SCIONElement):
         # dict_tuple = (isd_ad_raw, (hop, session_key))
         for dict_tuple in self._session_drkeys_map[session_id][1].items():
             if not dict_tuple[1][1]:  # session key has not yet been received
-                isd_ad = create_isd_ad(dict_tuple[0])
+                isd_as = ISD_AS(raw=dict_tuple[0])
                 req = DRKeyRequestKey.from_values(dict_tuple[1][0], session_id, self._public_key)
-                pkt = self._build_packet(PT.CERT_MGMT, path=path, dst_isd=isd_ad.isd, dst_ad=isd_ad.ad, payload=req)
+                pkt = self._build_packet(PT.CERT_MGMT, path=path, dst_ia=isd_as, payload=req)
                 self._send_to_next_hop(pkt, path.get_fwd_if())
 
     def _reply_drkeys(self, _, request):
@@ -556,19 +526,20 @@ class SCIONDaemon(SCIONElement):
         """
         assert path.interfaces
 
-        for isd_ad in [inf[0] for inf in path.interfaces]:
-            logging.debug("Interface on path: ISD: %d AD: %d" % (isd_ad.isd, isd_ad.ad))
+        for isd_as in [inf[0] for inf in path.interfaces]:
+            logging.debug("Interface on path: %s", isd_as)
 
         if session_id not in self._session_drkeys_map:
             ases = []
             # only care about one hop in the AS
             for e in [inf[0] for inf in path.interfaces]:
-                if e in ases: continue
+                if e in ases:
+                    continue
                 ases.append(e)
 
             self._session_drkeys_map[session_id] = (len(ases), dict())
-            for hop, isd_ad in enumerate(ases):
-                self._session_drkeys_map[session_id][1][isd_ad.int()] = (hop, None)
+            for hop, isd_as in enumerate(ases):
+                self._session_drkeys_map[session_id][1][isd_as.pack()] = (hop, None)
 
         e = threading.Event()
         self._drkey_requests.put((session_id, (path, e)))
@@ -594,10 +565,10 @@ class SCIONDaemon(SCIONElement):
         :type req: (SCIONAddr, PathBase, [bytes], Event)
         """
         dst, path, keys, _ = req
-        cert_chain = self.trust_store.get_cert(self.addr.get_isd_ad().isd, self.addr.get_isd_ad().ad)
+        cert_chain = self.trust_store.get_cert(self.addr.isd_as)
         snd = DRKeySendKeys.from_values(session_id, keys, cert_chain)
         pkt = self._build_packet(
-            dst.host_addr, path=path, dst_isd=dst.isd_id, dst_ad=dst.ad_id, payload=snd, dst_port=SCION_UDP_PORT)
+            dst.host, path=path, dst_ia=dst.isd_as, payload=snd, dst_port=SCION_UDP_PORT)
         self._send_to_next_hop(pkt, path.get_fwd_if())
 
     def _reply_drkey_send(self, _, req):
@@ -618,7 +589,7 @@ class SCIONDaemon(SCIONElement):
         :param path: path to destination
         :type path: PathBase
         :param session_id: session id of the flow (16 B)
-        :type bytes
+        :type session_id: bytes
         :return:
         """
 
@@ -747,9 +718,9 @@ class SCIONDaemon(SCIONElement):
         certificate = payload.certificate_chain.certs[0]
         session_key = decrypt_session_key(self._private_key, certificate.subject_enc_key, cypher)
 
-        isd_ad = create_isd_ad_int(pkt.addrs.src_isd, pkt.addrs.src_ad)
-        hop, _ = self._session_drkeys_map[payload.session_id][1][isd_ad]
-        self._session_drkeys_map[payload.session_id][1][isd_ad] = (hop, session_key)
+        isd_as = pkt.addrs.src.isd_as.pack()
+        hop, _ = self._session_drkeys_map[payload.session_id][1][isd_as]
+        self._session_drkeys_map[payload.session_id][1][isd_as] = (hop, session_key)
         self._drkey_requests.put((payload.session_id, None))
 
         logging.debug("Handle DRKey reply:\n Session Key[Hop:%d] = %s", payload.hop, session_key)
@@ -769,7 +740,7 @@ class SCIONDaemon(SCIONElement):
         self._drkeys_remote[payload.session_id] = payload.keys
 
         signature = sign(payload.session_id, self._private_key)
-        cert_chain = self.trust_store.get_cert(self.addr.get_isd_ad().isd, self.addr.get_isd_ad().ad)
+        cert_chain = self.trust_store.get_cert(self.addr.isd_as)
         pkt.reverse()
         pkt.set_payload(DRKeyAcknowledgeKeys.from_values(payload.session_id, signature, cert_chain))
         (next_hop, port) = self.get_first_hop(pkt)
@@ -788,19 +759,5 @@ class SCIONDaemon(SCIONElement):
         next_hop = self.ifid2addr[if_id]
         logging.debug("Next hop: %s", next_hop)
         self.send(pkt, next_hop)
-
-
-def create_isd_ad_int(isd, ad):
-    isd_ = isd << 20
-    ad_ = ad & 0x000fffff
-    return isd_ + ad_
-
-
-def create_isd_ad(isd_ad_int):
-    isd = isd_ad_int >> 20
-    ad = isd_ad_int & 0x000fffff
-    return ISD_AD(isd, ad)
-
-
 
 
