@@ -25,6 +25,8 @@ import threading
 from Crypto.Hash import SHA256
 
 # SCION
+from Crypto.Protocol.KDF import PBKDF2
+
 from infrastructure.scion_elem import SCIONElement
 from lib.crypto.asymcrypto import encrypt_session_key, sign
 from lib.crypto.symcrypto import compute_session_key
@@ -97,6 +99,7 @@ class CertServer(SCIONElement):
         }
 
         self.ad_sig_key = base64.b64decode(read_file(get_sig_key_file_path(self.conf_dir)))
+        self.drkey_secret_value = PBKDF2(self.config.master_as_key, b"Derive DRKEY secret value")
 
         if not is_sim:
             # Add more IPs here if we support dual-stack
@@ -230,10 +233,8 @@ class CertServer(SCIONElement):
         src, port, hop = info
         assert isinstance(src, SCIONAddr)
 
-        SECRET_VALUE = bytes(16)  # TODO(rsd) replace by useful secret value
-
         private_key = self.ad_sig_key
-        session_key = compute_session_key(SECRET_VALUE, session_id)
+        session_key = compute_session_key(self.drkey_secret_value, session_id)
         enc_session_key = encrypt_session_key(private_key, public_key, session_key)
 
         packed = []
@@ -242,8 +243,10 @@ class CertServer(SCIONElement):
         msg = b"".join(packed)
 
         signature = sign(msg, private_key)
-        cert_chain = self.trust_store.get_cert(self.addr.isd_as)
-        # logging.debug("%s", str(cert_chain))
+        cert_chain = None
+        if not self._is_core_as(self.addr.isd_as):
+            cert_chain = self.trust_store.get_cert(self.addr.isd_as)
+        logging.debug("get cert for %s: %s", self.addr.isd_as, cert_chain)
 
         drkey_reply = DRKeyReplyKey.from_values(hop, session_id, enc_session_key, signature, cert_chain)
 

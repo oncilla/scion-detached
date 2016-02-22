@@ -122,6 +122,7 @@ class Router(SCIONElement):
         logging.info("Interface: %s", self.interface.__dict__)
         self.of_gen_key = PBKDF2(self.config.master_as_key, b"Derive OF Key")
         self.sibra_key = PBKDF2(self.config.master_as_key, b"Derive SIBRA Key")
+        self.drkey_secret_value = PBKDF2(self.config.master_as_key, b"Derive DRKEY secret value")
         self.if_states = defaultdict(InterfaceState)
         self.revocations = ExpiringDict(1000, self.FWD_REVOCATION_TIMEOUT)
         self.pre_ext_handlers = {

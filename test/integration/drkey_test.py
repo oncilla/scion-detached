@@ -211,6 +211,9 @@ class TestSCIONDaemon(object):
             logging.error("Test timed out")
             sys.exit(1)
 
+        logging.debug("%s %s", ping_app.keys, pong_app.keys)
+        assert ping_app.keys == pong_app.keys
+
 
 def _load_as_list():
     as_dict = load_yaml_file(os.path.join(GEN_PATH, AS_LIST_FILE))
@@ -245,10 +248,11 @@ def main():
     if not args.server:
         args.server = "169.254.0.3" if args.mininet else "127.0.0.3"
     as_list = _load_as_list()
-    # srcs = _parse_locs(args.src_ia, as_list)
-    # dsts = _parse_locs(args.dst_ia, as_list)
+    srcs = _parse_locs(args.src_ia, as_list)
+    dsts = _parse_locs(args.dst_ia, as_list)
 
-    TestSCIONDaemon(args.client, args.server, [(1, 17)], [(2, 25)])
+   # TestSCIONDaemon(args.client, args.server, srcs, dsts)
+    TestSCIONDaemon(args.client, args.server, [(2,21)], [(2,23)])
 
 
 if __name__ == "__main__":
