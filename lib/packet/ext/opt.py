@@ -16,6 +16,7 @@
 =================================================================
 """
 # Stdlib
+import logging
 import struct
 
 # SCION
@@ -98,6 +99,7 @@ class OPTExt(HopByHopExtension):
         inst.session_id = session_id
         inst.data_hash = data_hash
         inst.pvf = pvf
+        inst._init_size(6)
         return inst
 
     def pack(self):

@@ -118,8 +118,6 @@ class OPTStore(object):
         """
         return self._tuple_map.pop(session_id, None)
 
-
-
     @staticmethod
     def _validate_tuple(tup, drkeys):
         """

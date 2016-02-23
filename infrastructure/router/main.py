@@ -228,6 +228,7 @@ class Router(SCIONElement):
         return ret
 
     def handle_opt(self, hdr, spkt, from_local_as):
+        logging.debug("handling opt packet")
         return hdr.process(self.opt_secret_value)
 
     def sync_interface(self):

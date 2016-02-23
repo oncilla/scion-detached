@@ -73,8 +73,8 @@ def client(c_addr, s_addr):
     # start DRKey exchange
     sd.get_drkeys(s_addr, path, session_id, non_blocking=True)
 
-    for i in range(100):
-        if i == 50:
+    for i in range(10):
+        if i == 5:
             sd.send_drkeys(s_addr, path, session_id)
             logging.debug("drkeys sent")
 
@@ -117,14 +117,15 @@ def server(addr):
     )
 
     spkt = None
-    for i in range(100):
+    for i in range(10):
+        logging.debug("##########################################################SRV: waiting for packet %d", i)
         raw, _ = sock.recv()
         # Request received, instantiating SCION packet
         spkt = SCIONL4Packet(raw)
-        logging.info('SRV: received: %d', i)
+        logging.info('################################### SRV: received: %d', i)
         if isinstance(spkt.get_payload(), PayloadRaw):
             if not opt.is_hash_valid(spkt):
-                logging.error("SRV: data hash is not valid")
+                logging.error("#########################################SRV: data hash is not valid")
                 sys.exit(1)
             opt.insert_packet(spkt)
 
