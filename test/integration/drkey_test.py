@@ -251,8 +251,8 @@ def main():
     srcs = _parse_locs(args.src_ia, as_list)
     dsts = _parse_locs(args.dst_ia, as_list)
 
-   # TestSCIONDaemon(args.client, args.server, srcs, dsts)
-    TestSCIONDaemon(args.client, args.server, [(2,21)], [(2,23)])
+    TestSCIONDaemon(args.client, args.server, srcs, dsts)
+    # TestSCIONDaemon(args.client, args.server, [(2,21),(2,23)], [(2,23)])
 
 
 if __name__ == "__main__":

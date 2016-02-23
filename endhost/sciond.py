@@ -40,6 +40,7 @@ from lib.packet.host_addr import haddr_parse, HostAddrIPv4
 from lib.packet.path import EmptyPath, PathCombinator, PathBase
 from lib.packet.path_mgmt import PathSegmentInfo
 from lib.packet.scion_addr import ISD_AS, SCIONAddr
+from lib.packet.scion_udp import SCIONUDPHeader
 from lib.path_db import DBResult, PathSegmentDB
 from lib.requests import RequestHandler
 from lib.packet.scion import PacketType as PT, SCIONL4Packet
@@ -504,7 +505,7 @@ class SCIONDaemon(SCIONElement):
                 isd_as = ISD_AS(raw=dict_tuple[0])
                 req = DRKeyRequestKey.from_values(dict_tuple[1][0], session_id, self._public_key)
                 pkt = self._build_packet(PT.CERT_MGMT, path=path, dst_ia=isd_as, payload=req)
-                self._send_to_next_hop(pkt, path.get_fwd_if())
+                self._send_to_next_hop(pkt, path)
 
     def _reply_drkeys(self, _, request):
         """
@@ -515,17 +516,19 @@ class SCIONDaemon(SCIONElement):
         """
         request[1].set()
 
-    def _start_drkey_exchange(self, path, session_id):
+    def _start_drkey_exchange(self, dst, path, session_id):
         """
         Starts the session key exchange between the source and the destination
 
+        :param dst: destination address
+        :type dst: SCIONAddr
         :param path: chosen path to the address. Make sure path.interfaces is not an empty list
         :type path: PathBase
         :param session_id: session id (16 B)
         :type session_id: bytes
         :return Event
         """
-        assert path.interfaces
+        assert (path.interfaces or isinstance(path, EmptyPath))
 
         for isd_as in [inf[0] for inf in path.interfaces]:
             logging.debug("Interface on path: %s", isd_as)
@@ -537,6 +540,10 @@ class SCIONDaemon(SCIONElement):
                 if e in ases:
                     continue
                 ases.append(e)
+            if isinstance(path, EmptyPath):
+                ases.append(dst.isd_as)
+
+            assert ases
 
             self._session_drkeys_map[session_id] = (len(ases), dict())
             for hop, isd_as in enumerate(ases):
@@ -570,7 +577,7 @@ class SCIONDaemon(SCIONElement):
         snd = DRKeySendKeys.from_values(session_id, keys, cert_chain)
         pkt = self._build_packet(
             dst.host, path=path, dst_ia=dst.isd_as, payload=snd, dst_port=SCION_UDP_PORT)
-        self._send_to_next_hop(pkt, path.get_fwd_if())
+        self.send(pkt, dst.host)
 
     def _reply_drkey_send(self, _, req):
         """
@@ -614,7 +621,7 @@ class SCIONDaemon(SCIONElement):
 
         :param dst: addres of the destination
         :type dst: SCIONAddr
-        :param path: path with non-empty path.interfaces
+        :param path: path with non-empty path.interfaces or is EmptyPath
         :type path: PathBase
         :param session_id: Session ID (16 B)
         :type session_id: bytes
@@ -622,13 +629,12 @@ class SCIONDaemon(SCIONElement):
         :type non_blocking: bool
         :return:
         """
-
-        assert path.interfaces
+        assert (path.interfaces or isinstance(path, EmptyPath))
 
         if self._check_drkeys(session_id):
             return self._get_drkeys_from_map(session_id)
 
-        e = self._start_drkey_exchange(path, session_id)
+        e = self._start_drkey_exchange(dst, path, session_id)
 
         if non_blocking:
             return []
@@ -636,7 +642,7 @@ class SCIONDaemon(SCIONElement):
         deadline = SCIONTime.get_time() + self.TIMEOUT
         while not self._wait_for_events([e], deadline):
             logging.error("get_drkeys timed out for %s: retry", session_id)
-            e = self._start_drkey_exchange(path, session_id)
+            e = self._start_drkey_exchange(dst, path, session_id)
             deadline = SCIONTime.get_time() + self.TIMEOUT
         return self._get_drkeys_from_map(session_id)
 
@@ -759,9 +765,7 @@ class SCIONDaemon(SCIONElement):
         signature = sign(payload.session_id, self._private_key)
         pkt.reverse()
         pkt.set_payload(DRKeyAcknowledgeKeys.from_values(payload.session_id, signature))
-        (next_hop, port) = self.get_first_hop(pkt)
-        assert next_hop is not None
-        self.send(pkt, next_hop, port)
+        self.send(pkt, pkt.addrs.dst.host, pkt.l4_hdr.dst_port)
 
     def handle_drkey_ack(self, pkt):
         """
@@ -779,15 +783,25 @@ class SCIONDaemon(SCIONElement):
 
         logging.debug("Handle DRKey ack %s", pkt.get_payload())
 
-    def _send_to_next_hop(self, pkt, if_id):
+    def _send_to_next_hop(self, pkt, path):
         """
-        Sends the packet to the next hop of the given if_id.
-        :param if_id: The interface ID of the corresponding interface.
-        :type if_id: int.
+        Sends the packet to the next hop on the path. If path is EmptyPath it is sent to one random interface.
+
+        :param pkt: The packet
+        :type pkt: SCIONL4Packet
+        :param path: The path
+        :type path: PathBase
         """
+        if_id = path.get_fwd_if()
+
+        if isinstance(path, EmptyPath):
+            # Dirty hack, choose any interface, the router will catch the packet anyway
+            if_id = list(self.ifid2addr.keys())[0]
+
         if if_id not in self.ifid2addr:
             logging.error("Interface ID %d not found in ifid2addr.", if_id)
             return
+
         next_hop = self.ifid2addr[if_id]
         logging.debug("Next hop: %s", next_hop)
         self.send(pkt, next_hop)
