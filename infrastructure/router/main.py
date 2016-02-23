@@ -54,6 +54,7 @@ from lib.errors import (
     SCIONServiceLookupError,
 )
 from lib.log import log_exception
+from lib.packet.ext.opt import OPTExt
 from lib.sibra.ext.ext import SibraExtBase
 from lib.packet.ext.traceroute import TracerouteExt
 from lib.packet.path_mgmt import (
@@ -122,12 +123,13 @@ class Router(SCIONElement):
         logging.info("Interface: %s", self.interface.__dict__)
         self.of_gen_key = PBKDF2(self.config.master_as_key, b"Derive OF Key")
         self.sibra_key = PBKDF2(self.config.master_as_key, b"Derive SIBRA Key")
-        self.drkey_secret_value = PBKDF2(self.config.master_as_key, b"Derive DRKEY secret value")
+        self.opt_secret_value = PBKDF2(self.config.master_as_key, b"Derive OPT secret value")
         self.if_states = defaultdict(InterfaceState)
         self.revocations = ExpiringDict(1000, self.FWD_REVOCATION_TIMEOUT)
         self.pre_ext_handlers = {
             SibraExtBase.EXT_TYPE: self.handle_sibra,
             TracerouteExt.EXT_TYPE: self.handle_traceroute,
+            OPTExt.EXT_TYPE: self.handle_opt,
         }
         self.post_ext_handlers = {}
         self.sibra_state = SibraState(self.interface.bandwidth,
@@ -224,6 +226,9 @@ class Router(SCIONElement):
                           self.sibra_key)
         logging.debug("Sibra state:\n%s", self.sibra_state)
         return ret
+
+    def handle_opt(self, hdr, spkt, from_local_as):
+        return hdr.process(self.opt_secret_value)
 
     def sync_interface(self):
         """

@@ -50,6 +50,7 @@ class ExtensionClass(TypeBase):
 class ExtHopByHopType(TypeBase):
     TRACEROUTE = 0
     SIBRA = 1
+    OPT = 2
 
 
 class ExtEndToEndType(TypeBase):

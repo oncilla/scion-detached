@@ -99,7 +99,7 @@ class CertServer(SCIONElement):
         }
 
         self.ad_sig_key = base64.b64decode(read_file(get_sig_key_file_path(self.conf_dir)))
-        self.drkey_secret_value = PBKDF2(self.config.master_as_key, b"Derive DRKEY secret value")
+        self.opt_secret_value = PBKDF2(self.config.master_as_key, b"Derive OPT secret value")
 
         if not is_sim:
             # Add more IPs here if we support dual-stack
@@ -234,7 +234,7 @@ class CertServer(SCIONElement):
         assert isinstance(src, SCIONAddr)
 
         private_key = self.ad_sig_key
-        session_key = compute_session_key(self.drkey_secret_value, session_id)
+        session_key = compute_session_key(self.opt_secret_value, session_id)
         enc_session_key = encrypt_session_key(private_key, public_key, session_key)
 
         packed = []
