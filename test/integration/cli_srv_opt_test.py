@@ -28,7 +28,8 @@ from nacl.utils import random as rand_bytes
 
 
 # SCION
-from endhost.opt_store import OPTStore, OPTCreatePacketParams
+from endhost.opt_store import OPTStore, OPTCreatePacketParams, create_scion_udp_packet, is_hash_valid, get_opt_ext_hdr, \
+    set_answer_packet
 from endhost.sciond import SCIONDaemon
 from lib.defines import GEN_PATH, SCION_UDP_EH_DATA_PORT
 from lib.log import init_logging
@@ -71,14 +72,10 @@ def client(c_addr, s_addr):
 
     session_id = rand_bytes(16)
     # start DRKey exchange
-    sd.get_drkeys(s_addr, path, session_id, non_blocking=True)
+    sd.init_drkeys(s_addr, path, session_id, non_blocking=True)
 
-    for i in range(100):
-        if i == 5:
-            sd.send_drkeys(s_addr, path, session_id)
-            logging.debug("drkeys sent")
+    for i in range(10):
 
-        opt = OPTStore()
         params = OPTCreatePacketParams()
         params.payload = PayloadRaw(("request %d to server" % i).encode("utf-8"))
         params.session_id = session_id
@@ -87,13 +84,10 @@ def client(c_addr, s_addr):
         params.src = c_addr
         params.port_src = sock.port
         params.path = path
-        params.session_key_dst = sd.get_drkey_destination(session_id)
+        params.session_key_dst = sd.get_drkeys(session_id).dst_key
 
-        spkt = opt.create_scion_udp_packet(params)
+        spkt = create_scion_udp_packet(params)
 
-
-        logging.critical("############\n\nSession ID: %s\n\nSecret Value: %s\n\nSession Key: %s\n\nData Hash: %s\n\nPVF: %s\n\n",
-                      session_id, sd._secret_value, params.session_key_dst, spkt.ext_hdrs[0].data_hash, spkt.ext_hdrs[0].pvf)
 
         next_hop, port = sd.get_first_hop(spkt)
         assert next_hop is not None
@@ -101,7 +95,15 @@ def client(c_addr, s_addr):
                      i, next_hop, port)
         sd.send(spkt, next_hop, port)
 
+    sd.send_drkeys(s_addr, path, session_id)
+    logging.debug("drkeys sent")
+
     raw, _ = sock.recv()
+    spkt = SCIONL4Packet(raw)
+    opt = OPTStore()
+    opt.insert_packet(spkt)
+    assert opt.validate_session(session_id, sd.get_drkeys(session_id))
+
     logging.info('CLI: Received response:\n%s', SCIONL4Packet(raw))
     logging.info("CLI: leaving. (Successful)")
     sock.close()
@@ -121,37 +123,32 @@ def server(addr):
     )
 
     spkt = None
-    for i in range(100):
-        logging.debug("##########################################################SRV: waiting for packet %d", i)
+    for i in range(10):
+        logging.debug("SRV: waiting for packet %d", i)
         raw, _ = sock.recv()
         # Request received, instantiating SCION packet
         spkt = SCIONL4Packet(raw)
-        logging.info('################################### SRV: received: %d', i)
+        logging.info('SRV: received: %s', spkt.get_payload()._raw)
 
         if isinstance(spkt.get_payload(), PayloadRaw):
-            if not opt.is_hash_valid(spkt):
+            if not is_hash_valid(spkt):
                 logging.error("#########################################SRV: data hash is not valid")
                 sys.exit(1)
-            logging.debug("******************* inserting packet")
+            logging.debug("inserting packet")
             opt.insert_packet(spkt)
 
-    session_id = opt.get_opt_ext_hdr(spkt).session_id
-    drkeys = sd.get_drkeys_remote(session_id)
-    while not drkeys:
-        drkeys = sd.get_drkeys_remote(session_id)
+    session_id = get_opt_ext_hdr(spkt).session_id
+    drkeys = sd.get_drkeys(session_id)
+    while not drkeys.intermediate_keys:
+        drkeys = sd.get_drkeys(session_id)
         logging.debug("Waiting for drkeys: %s", session_id)
         time.sleep(0.001)
 
-    logging.critical("****************\n\nSession ID: %s\n\nSecret Value: %s\n\nSession Key: %s\n\nData Hash: %s\n\nPVF: %s\n\n",
-                  spkt.ext_hdrs[0].session_id, bytes(16), drkeys[-1], spkt.ext_hdrs[0].data_hash, spkt.ext_hdrs[0].pvf)
     logging.critical("DRKeys: %s", drkeys)
 
     if opt.validate_session(session_id, drkeys):
         logging.info('SRV: request received, sending response.')
-        # Reverse the packet
-        spkt.reverse()
-        # Setting payload
-        spkt.set_payload(PayloadRaw(b"response"))
+        set_answer_packet(spkt, PayloadRaw(b"response"), drkeys)
         # Determine first hop (i.e., local address of border router)
         (next_hop, port) = sd.get_first_hop(spkt)
         assert next_hop is not None
@@ -189,7 +186,7 @@ def main():
     threading.Thread(
         target=thread_safety_net, args=(server, srv_addr),
         name="C2S_extn.server", daemon=True).start()
-    time.sleep(0.5)
+    time.sleep(1)
 
     cli_ia = ISD_AS(args.cli_ia)
     cli_addr = SCIONAddr.from_values(cli_ia, haddr_parse_interface(args.client))

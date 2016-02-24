@@ -113,6 +113,10 @@ class OPTExt(HopByHopExtension):
         self._check_len(raw)
         return raw
 
+    def reverse(self):
+        self.data_hash = None
+        self.pvf = None
+
     @staticmethod
     def compute_intermediate_pvf(session_key, pvf):
         """

@@ -32,6 +32,7 @@ import unittest
 from nacl.utils import random as rand_nonce
 
 # SCION
+from endhost.opt_store import DRKeys
 from endhost.sciond import SCIOND_API_HOST, SCIOND_API_PORT, SCIONDaemon
 from lib.defines import AS_LIST_FILE, GEN_PATH
 from lib.log import init_logging
@@ -85,8 +86,7 @@ class Ping(object):
 
     def send(self):
 
-        self.sd.get_drkey_destination(self.session_id)
-        self.sd.get_drkeys(self.dst, self.path, self.session_id, non_blocking=True)
+        self.sd.init_drkeys(dst=self.dst, path=self.path, session_id=self.session_id, non_blocking=True)
 
         cmn_hdr, addr_hdr = build_base_hdrs(self.src, self.dst)
         payload = PayloadRaw(b"ping " + self.token)
@@ -97,10 +97,11 @@ class Ping(object):
         (next_hop, port) = self.sd.get_first_hop(spkt)
         self.sd.send(spkt, next_hop, port)
 
-        logging.info("Start to get keys (blocking)")
-        self.keys = self.sd.get_drkeys(self.dst, self.path, self.session_id)
         logging.info("Start sending keys (blocking)")
-        self.sd.send_drkeys(self.dst, self.path, self.session_id)
+        self.sd.send_drkeys(dst=self.dst, path=self.path, session_id=self.session_id)
+        logging.info("Start to get keys (blocking)")
+        self.keys = self.sd.get_drkeys(self.session_id)
+        assert isinstance(self.keys, DRKeys)
         logging.debug("Sent keys %s", self.keys)
 
     def recv(self):
@@ -155,10 +156,10 @@ class Pong(object):
             assert next_hop is not None
             self.sd.send(spkt, next_hop, port)
 
-        while not self.sd.get_drkeys_remote(self.session_id):
+        while not self.sd.get_drkeys(self.session_id).intermediate_keys:
             time.sleep(0.0001)
 
-        self.keys = self.sd.get_drkeys_remote(self.session_id)
+        self.keys = self.sd.get_drkeys(self.session_id)
 
         self.sock.close()
         self.sd.stop()
@@ -211,7 +212,7 @@ class TestSCIONDaemon(object):
             logging.error("Test timed out")
             sys.exit(1)
 
-        logging.debug("%s %s", ping_app.keys, pong_app.keys)
+        logging.debug("%s\n%s", ping_app.keys, pong_app.keys)
         assert ping_app.keys == pong_app.keys
 
 
@@ -252,7 +253,7 @@ def main():
     dsts = _parse_locs(args.dst_ia, as_list)
 
     TestSCIONDaemon(args.client, args.server, srcs, dsts)
-    # TestSCIONDaemon(args.client, args.server, [(2,21),(2,23)], [(2,23)])
+    # TestSCIONDaemon(args.client, args.server, [(2,21)], [(2,23)])
 
 
 if __name__ == "__main__":

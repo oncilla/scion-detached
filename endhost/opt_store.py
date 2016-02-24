@@ -36,6 +36,113 @@ class OPTCreatePacketParams(object):
     path = None  # PathBase
 
 
+
+def get_opt_ext_hdr(pkt):
+    """
+
+    :param pkt:
+    :type pkt: SCIONL4Packet
+    :return:
+    """
+    for ext_hdr in pkt.ext_hdrs:
+        if ext_hdr.EXT_TYPE == OPTExt.EXT_TYPE:
+            assert isinstance(ext_hdr, OPTExt)
+            return ext_hdr
+    return None
+
+def create_scion_udp_packet(params):
+    """
+
+    :return:
+    """
+    assert isinstance(params, OPTCreatePacketParams)
+    assert isinstance(params.payload, PayloadBase)
+    assert isinstance(params.src, SCIONAddr)
+    assert isinstance(params.dst, SCIONAddr)
+
+    opt_ext = OPTExt.from_values(params.session_id)
+    opt_ext.set_initial_pvf(params.session_key_dst, params.payload)
+    cmn_hdr, addr_hdr = build_base_hdrs(params.src, params.dst)
+    udp_hdr = SCIONUDPHeader.from_values(params.src, params.port_src,
+                                         params.dst, params.port_dst,
+                                         params.payload)
+    return SCIONL4Packet.from_values(cmn_hdr, addr_hdr, params.path,
+                                 [opt_ext], udp_hdr, params.payload)
+
+
+def get_remote_session_key(drkeys):
+    """
+
+    :param drkeys:
+    :type drkeys: DRKeys
+    :return:
+    """
+    if drkeys.is_source:
+        return drkeys.dst_key
+    else:
+        return drkeys.src_key
+
+
+def get_local_session_key(drkeys):
+    """
+
+    :param drkeys:
+    :type drkeys: DRKeys
+    :return:
+    """
+    if not drkeys.is_source:
+        return drkeys.dst_key
+    else:
+        return drkeys.src_key
+
+
+def get_intermediate_keys(drkeys):
+    """
+
+    :param drkeys:
+    :return:
+    """
+    if drkeys.is_source:
+        return drkeys.intermediate_keys[::-1]
+    else:
+        return drkeys.intermediate_keys
+
+
+def set_answer_packet(pkt, payload, drkeys):
+    """
+
+    :param pkt:
+    :type pkt: SCIONL4Packet
+    :param payload:
+    :type payload: PayloadBase
+    :param drkeys:
+    :return:
+    """
+
+    pkt.reverse()
+    pkt.set_payload(payload)
+    get_opt_ext_hdr(pkt).set_initial_pvf(get_remote_session_key(drkeys), payload)
+    assert get_opt_ext_hdr(pkt).pvf is not None
+    assert get_opt_ext_hdr(pkt).data_hash is not None
+    assert get_opt_ext_hdr(pkt).session_id is not None
+    return pkt
+
+
+def is_hash_valid(pkt):
+    """
+
+    :param pkt:
+    :type pkt: SCIONL4Packet
+    :return:
+    """
+    assert isinstance(pkt, SCIONL4Packet)
+
+    ext_hdr = get_opt_ext_hdr(pkt)
+    if ext_hdr:
+        return OPTExt.compute_data_hash(pkt.get_payload()) == ext_hdr.data_hash
+    return True
+
+
 class OPTStore(object):
     """
 
@@ -43,56 +150,6 @@ class OPTStore(object):
 
     def __init__(self):
         self._tuple_map = dict()  # mapping {session_id -> [(data hash, pvf)]} used to verify
-
-
-    @staticmethod
-    def get_opt_ext_hdr(pkt):
-        """
-
-        :param pkt:
-        :type pkt: SCIONL4Packet
-        :return:
-        """
-        for ext_hdr in pkt.ext_hdrs:
-            if ext_hdr.EXT_TYPE == OPTExt.EXT_TYPE:
-                assert isinstance(ext_hdr, OPTExt)
-                return ext_hdr
-        return None
-
-    @staticmethod
-    def create_scion_udp_packet(params):
-        """
-
-        :return:
-        """
-        assert isinstance(params, OPTCreatePacketParams)
-        assert isinstance(params.payload, PayloadBase)
-        assert isinstance(params.src, SCIONAddr)
-        assert isinstance(params.dst, SCIONAddr)
-
-        opt_ext = OPTExt.from_values(params.session_id)
-        opt_ext.set_initial_pvf(params.session_key_dst, params.payload)
-        cmn_hdr, addr_hdr = build_base_hdrs(params.src, params.dst)
-        udp_hdr = SCIONUDPHeader.from_values(params.src, params.port_src,
-                                             params.dst, params.port_dst,
-                                             params.payload)
-        return SCIONL4Packet.from_values(cmn_hdr, addr_hdr, params.path,
-                                     [opt_ext], udp_hdr, params.payload)
-
-    @staticmethod
-    def is_hash_valid(pkt):
-        """
-
-        :param pkt:
-        :type pkt: SCIONL4Packet
-        :return:
-        """
-        assert isinstance(pkt, SCIONL4Packet)
-
-        ext_hdr = OPTStore.get_opt_ext_hdr(pkt)
-        if ext_hdr:
-            return OPTExt.compute_data_hash(pkt.get_payload()) == ext_hdr.data_hash
-        return True
 
     def insert_packet(self, pkt):
         """
@@ -104,7 +161,7 @@ class OPTStore(object):
 
         assert isinstance(pkt, SCIONL4Packet)
 
-        ext_hdr = OPTStore.get_opt_ext_hdr(pkt)
+        ext_hdr = get_opt_ext_hdr(pkt)
         if ext_hdr:
             if ext_hdr.session_id in self._tuple_map:
                 self._tuple_map[ext_hdr.session_id].append((ext_hdr.data_hash, ext_hdr.pvf))
@@ -127,15 +184,15 @@ class OPTStore(object):
         :param tup:
         :type tup: (bytes, bytes)
         :param drkeys:
-        :type drkeys: [bytes]
+        :type drkeys: DRKeys
         :return:
         """
 
-        pvf = OPTExt.compute_initial_pvf(drkeys[-1], tup[0])
+        pvf = OPTExt.compute_initial_pvf(get_local_session_key(drkeys), tup[0])
         logging.critical("Original pvf %s", pvf)
 
         # last key is the dst key
-        for key in drkeys[:-1]:
+        for key in get_intermediate_keys(drkeys):
             assert isinstance(key, bytes) and len(key) == 16
             pvf = OPTExt.compute_intermediate_pvf(key, pvf)
             logging.critical("\n\tpvf: %s\nor\tpvf: %s\nkey: %s", pvf, tup[1], key)
@@ -148,7 +205,7 @@ class OPTStore(object):
         :param session_id:
         :type session_id: bytes
         :param drkeys:
-        :type drkeys: [bytes]
+        :type drkeys: DRKeys
         :return:
         """
 
@@ -156,3 +213,25 @@ class OPTStore(object):
             if not self._validate_tuple(tup, drkeys):
                 return False
         return True
+
+
+class DRKeys(object):
+
+    def __init__(self, src_key, intermediate_keys, dst_key, is_source):
+        self.src_key = src_key
+        self.intermediate_keys = intermediate_keys
+        self.dst_key = dst_key
+        self.is_source = is_source
+
+    def __eq__(self, other):
+        return (isinstance(other, DRKeys) and
+                self.src_key == other.src_key and
+                self.intermediate_keys == other.intermediate_keys and
+                self.dst_key == other.dst_key)
+
+    def __str__(self):
+        return "[src: %s]\n[int: %s]\n[dst: %s]" % (self.src_key, self.intermediate_keys, self.dst_key)
+
+    @classmethod
+    def from_bytes_list(cls, bytes_list):
+        return DRKeys(bytes_list[0], bytes_list[1:-1], bytes_list[-1], False)
