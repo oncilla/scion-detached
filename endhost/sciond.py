@@ -647,7 +647,7 @@ class SCIONDaemon(SCIONElement):
         return self._get_drkeys_from_map(session_id)
 
     def _get_drkeys_from_map(self, session_id):
-        drkeys = sorted([x[1] for x in self._session_drkeys_map[session_id][1].values()], key=lambda x: x[0])
+        drkeys = [x[1] for x in sorted(self._session_drkeys_map[session_id][1].values(), key=lambda x: x[0])]
         drkeys.append(self.get_drkey_destination(session_id))
         return drkeys
 

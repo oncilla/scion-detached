@@ -55,6 +55,7 @@ from lib.errors import (
 )
 from lib.log import log_exception
 from lib.packet.ext.opt import OPTExt
+from lib.packet.scion_addr import SCIONAddr
 from lib.sibra.ext.ext import SibraExtBase
 from lib.packet.ext.traceroute import TracerouteExt
 from lib.packet.path_mgmt import (
@@ -228,8 +229,10 @@ class Router(SCIONElement):
         return ret
 
     def handle_opt(self, hdr, spkt, from_local_as):
-        logging.debug("handling opt packet")
-        return hdr.process(self.opt_secret_value)
+        if self.addr.isd_as == spkt.addrs.src.isd_as or not from_local_as:
+            logging.debug("updating opt-header")
+            hdr.process(self.opt_secret_value)
+        return []
 
     def sync_interface(self):
         """
@@ -348,12 +351,7 @@ class Router(SCIONElement):
         :type drkey_pkt: SCIONL4Packet`
         """
         payload = drkey_pkt.get_payload()
-
-        logging.critical("Processing DRKey packet - router")
         if payload.PAYLOAD_TYPE == DRKT.REQUEST_KEY:
-            # handle state update
-            logging.critical("Received DRKey Request - router:\n%s",
-                          str(drkey_pkt.get_payload()))
             self.relay_cert_server_packet(drkey_pkt, False)
         else:
             self.forward_packet(drkey_pkt, from_local_ad)

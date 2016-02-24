@@ -73,7 +73,7 @@ def client(c_addr, s_addr):
     # start DRKey exchange
     sd.get_drkeys(s_addr, path, session_id, non_blocking=True)
 
-    for i in range(10):
+    for i in range(100):
         if i == 5:
             sd.send_drkeys(s_addr, path, session_id)
             logging.debug("drkeys sent")
@@ -90,16 +90,20 @@ def client(c_addr, s_addr):
         params.session_key_dst = sd.get_drkey_destination(session_id)
 
         spkt = opt.create_scion_udp_packet(params)
+
+
+        logging.critical("############\n\nSession ID: %s\n\nSecret Value: %s\n\nSession Key: %s\n\nData Hash: %s\n\nPVF: %s\n\n",
+                      session_id, sd._secret_value, params.session_key_dst, spkt.ext_hdrs[0].data_hash, spkt.ext_hdrs[0].pvf)
+
         next_hop, port = sd.get_first_hop(spkt)
         assert next_hop is not None
         logging.info("CLI: Sending packet:\n%d\nFirst hop: %s:%s",
                      i, next_hop, port)
         sd.send(spkt, next_hop, port)
 
-
     raw, _ = sock.recv()
     logging.info('CLI: Received response:\n%s', SCIONL4Packet(raw))
-    logging.info("CLI: leaving.")
+    logging.info("CLI: leaving. (Successful)")
     sock.close()
 
 
@@ -117,16 +121,18 @@ def server(addr):
     )
 
     spkt = None
-    for i in range(10):
+    for i in range(100):
         logging.debug("##########################################################SRV: waiting for packet %d", i)
         raw, _ = sock.recv()
         # Request received, instantiating SCION packet
         spkt = SCIONL4Packet(raw)
         logging.info('################################### SRV: received: %d', i)
+
         if isinstance(spkt.get_payload(), PayloadRaw):
             if not opt.is_hash_valid(spkt):
                 logging.error("#########################################SRV: data hash is not valid")
                 sys.exit(1)
+            logging.debug("******************* inserting packet")
             opt.insert_packet(spkt)
 
     session_id = opt.get_opt_ext_hdr(spkt).session_id
@@ -135,6 +141,10 @@ def server(addr):
         drkeys = sd.get_drkeys_remote(session_id)
         logging.debug("Waiting for drkeys: %s", session_id)
         time.sleep(0.001)
+
+    logging.critical("****************\n\nSession ID: %s\n\nSecret Value: %s\n\nSession Key: %s\n\nData Hash: %s\n\nPVF: %s\n\n",
+                  spkt.ext_hdrs[0].session_id, bytes(16), drkeys[-1], spkt.ext_hdrs[0].data_hash, spkt.ext_hdrs[0].pvf)
+    logging.critical("DRKeys: %s", drkeys)
 
     if opt.validate_session(session_id, drkeys):
         logging.info('SRV: request received, sending response.')
@@ -147,7 +157,7 @@ def server(addr):
         assert next_hop is not None
         # Send packet to first hop (it is sent through SCIONDaemon)
         sd.send(spkt, next_hop, port)
-        logging.info("SRV: Leaving server.")
+        logging.info("SRV: Leaving server. (Successful)")
         sock.close()
     else:
         logging.error("Invalid pvfs")
@@ -165,7 +175,7 @@ def main():
     parser.add_argument('cli_ia', nargs='?', help='Client isd-as',
                         default="1-19")
     parser.add_argument('srv_ia', nargs='?', help='Server isd-as',
-                        default="2-26")
+                        default="1-13")
     args = parser.parse_args()
     init_logging("logs/c2s_extn", console_level=logging.DEBUG)
 

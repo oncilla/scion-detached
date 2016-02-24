@@ -15,6 +15,8 @@
 :mod:`opt_store` --- OPT store
 ===========================================
 """
+import logging
+
 from lib.packet.ext.opt import OPTExt
 from lib.packet.packet_base import PayloadRaw, PayloadBase
 from lib.packet.scion import SCIONL4Packet, build_base_hdrs
@@ -130,11 +132,13 @@ class OPTStore(object):
         """
 
         pvf = OPTExt.compute_initial_pvf(drkeys[-1], tup[0])
+        logging.critical("Original pvf %s", pvf)
 
         # last key is the dst key
         for key in drkeys[:-1]:
             assert isinstance(key, bytes) and len(key) == 16
             pvf = OPTExt.compute_intermediate_pvf(key, pvf)
+            logging.critical("\n\tpvf: %s\nor\tpvf: %s\nkey: %s", pvf, tup[1], key)
 
         return pvf == tup[1]
 

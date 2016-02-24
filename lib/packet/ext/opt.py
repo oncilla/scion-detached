@@ -56,6 +56,7 @@ class OPTExt(HopByHopExtension):
     PVF_LEN = 16
     PADDING_LEN = 5
     LEN = PADDING_LEN + SESSION_ID_LEN + DATA_HASH_LEN + PVF_LEN
+    NUMBER_OF_ADDITION_LINES = 6
 
     def __init__(self, raw=None):
         """
@@ -99,7 +100,7 @@ class OPTExt(HopByHopExtension):
         inst.session_id = session_id
         inst.data_hash = data_hash
         inst.pvf = pvf
-        inst._init_size(6)
+        inst._init_size(inst.NUMBER_OF_ADDITION_LINES)
         return inst
 
     def pack(self):
@@ -129,8 +130,11 @@ class OPTExt(HopByHopExtension):
         :type secret_value: bytes
         :return:
         """
+        old_pvf = self.pvf
         session_key = compute_session_key(secret_value, self.session_id)
         self.pvf = self.compute_intermediate_pvf(session_key, self.pvf)
+        logging.critical("############\n\nSession ID: %s\n\nSecret Value: %s\n\nSession Key: %s\n\nData Hash: %s\n\nOld PVF: %s\n\nPVF: %s\n\n",
+                  self.session_id, secret_value, session_key, self.data_hash, old_pvf, self.pvf)
         return []
 
     @staticmethod
@@ -170,6 +174,7 @@ class OPTExt(HopByHopExtension):
             self.set_data_hash(payload)
         assert self.data_hash
         self.pvf = self.compute_initial_pvf(session_key_dst, self.data_hash)
+
     def __str__(self):
         return ('%s(%sB):\nsession id:%s\ndata hash:%s\npvf: %s' % (self.NAME, len(self),
                                                                     self.session_id, self.data_hash, self.pvf))
