@@ -60,6 +60,7 @@ def client(c_addr, s_addr):
         GEN_PATH, c_addr.isd_as[0], c_addr.isd_as[1])
     # Start SCIONDaemon
     sd = SCIONDaemon.start(conf_dir, c_addr.host)
+    opt = OPTStore()
     logging.info("CLI: Sending PATH request for %s", s_addr.isd_as)
     # Open a socket for incomming DATA traffic
     sock = UDPSocket(bind=(str(c_addr.host), 0, "Client"),
@@ -74,37 +75,38 @@ def client(c_addr, s_addr):
     # start DRKey exchange
     sd.init_drkeys(s_addr, path, session_id, non_blocking=True)
 
-    for i in range(10):
+    params = OPTCreatePacketParams()
+    params.session_id = session_id
+    params.dst = s_addr
+    params.port_dst = SCION_UDP_EH_DATA_PORT
+    params.src = c_addr
+    params.port_src = sock.port
+    params.path = path
+    params.session_key_dst = sd.get_drkeys(session_id).dst_key
 
-        params = OPTCreatePacketParams()
+    for i in range(10):
         params.payload = PayloadRaw(("request %d to server" % i).encode("utf-8"))
-        params.session_id = session_id
-        params.dst = s_addr
-        params.port_dst = SCION_UDP_EH_DATA_PORT
-        params.src = c_addr
-        params.port_src = sock.port
-        params.path = path
-        params.session_key_dst = sd.get_drkeys(session_id).dst_key
 
         spkt = create_scion_udp_packet(params)
-
-
         next_hop, port = sd.get_first_hop(spkt)
         assert next_hop is not None
         logging.info("CLI: Sending packet:\n%d\nFirst hop: %s:%s",
                      i, next_hop, port)
         sd.send(spkt, next_hop, port)
 
-    sd.send_drkeys(s_addr, path, session_id)
-    logging.debug("drkeys sent")
+        raw, _ = sock.recv()
+        logging.info('CLI: Received response:\n%s', SCIONL4Packet(raw))
+        spkt = SCIONL4Packet(raw)
+        opt.insert_packet(spkt)
 
-    raw, _ = sock.recv()
-    spkt = SCIONL4Packet(raw)
-    opt = OPTStore()
-    opt.insert_packet(spkt)
+    sd.send_drkeys(s_addr, path, session_id)
+    logging.debug("DRKeys sent")
+
+    assert sd.get_drkeys(session_id).src_key is not None
     assert opt.validate_session(session_id, sd.get_drkeys(session_id))
 
-    logging.info('CLI: Received response:\n%s', SCIONL4Packet(raw))
+    logging.debug("OPT Session size: %d", opt.number_of_packets(session_id))
+
     logging.info("CLI: leaving. (Successful)")
     sock.close()
 
@@ -122,7 +124,6 @@ def server(addr):
         addr_type=addr.host.TYPE
     )
 
-    spkt = None
     for i in range(10):
         logging.debug("SRV: waiting for packet %d", i)
         raw, _ = sock.recv()
@@ -130,36 +131,33 @@ def server(addr):
         spkt = SCIONL4Packet(raw)
         logging.info('SRV: received: %s', spkt.get_payload()._raw)
 
-        if isinstance(spkt.get_payload(), PayloadRaw):
-            if not is_hash_valid(spkt):
-                logging.error("#########################################SRV: data hash is not valid")
-                sys.exit(1)
-            logging.debug("inserting packet")
-            opt.insert_packet(spkt)
+        if not is_hash_valid(spkt):
+            logging.error("#########################################SRV: data hash is not valid")
+            sys.exit(1)
+        opt.insert_packet(spkt)
 
-    session_id = get_opt_ext_hdr(spkt).session_id
-    drkeys = sd.get_drkeys(session_id)
-    while not drkeys.intermediate_keys:
-        drkeys = sd.get_drkeys(session_id)
-        logging.debug("Waiting for drkeys: %s", session_id)
-        time.sleep(0.001)
-
-    logging.critical("DRKeys: %s", drkeys)
-
-    if opt.validate_session(session_id, drkeys):
-        logging.info('SRV: request received, sending response.')
-        set_answer_packet(spkt, PayloadRaw(b"response"), drkeys)
-        # Determine first hop (i.e., local address of border router)
+        session_id = get_opt_ext_hdr(spkt).session_id
+        set_answer_packet(spkt, PayloadRaw(b"response"), sd.get_drkeys(session_id))
         (next_hop, port) = sd.get_first_hop(spkt)
         assert next_hop is not None
-        # Send packet to first hop (it is sent through SCIONDaemon)
         sd.send(spkt, next_hop, port)
-        logging.info("SRV: Leaving server. (Successful)")
-        sock.close()
-    else:
-        logging.error("Invalid pvfs")
-        sock.close()
-        sys.exit(1)
+
+    session_ids = opt.get_sessions()
+    for session_id in session_ids:
+        drkeys = sd.get_drkeys(session_id)
+        while not drkeys.intermediate_keys:
+            drkeys = sd.get_drkeys(session_id)
+            logging.debug("Waiting for drkeys: %s", session_id)
+            time.sleep(0.001)
+
+        logging.critical("DRKeys: %s", drkeys)
+
+        if not opt.validate_session(session_id, drkeys):
+            logging.error("Invalid pvfs")
+            sock.close()
+            sys.exit(1)
+
+    logging.info("SRV: Leaving server. (Successful)")
 
 
 def main():

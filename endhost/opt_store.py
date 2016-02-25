@@ -214,6 +214,21 @@ class OPTStore(object):
                 return False
         return True
 
+    def get_sessions(self):
+        """
+
+        :return:
+        """
+        return self._tuple_map.keys()
+
+    def number_of_packets(self, session_id):
+        """
+
+        :param session_id:
+        :return:
+        """
+        return len(self._tuple_map[session_id])
+
 
 class DRKeys(object):
 
