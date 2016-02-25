@@ -239,8 +239,8 @@ class DRKeySendKeys(DRKeyPayloadBase):
         self.session_id = None
         self.keys_length = None
         self.keys = None
-        self.cc_length = None
-        self.certificate_chain = None
+        # self.cc_length = None
+        # self.certificate_chain = None
         if raw is not None:
             self._parse(raw)
 
@@ -254,9 +254,9 @@ class DRKeySendKeys(DRKeyPayloadBase):
         self.keys = []
         for _ in range(self.keys_length):
             self.keys.append(data.pop(DRKeyConstants.DRKEY_LENGTH))
-        self.cc_length = int.from_bytes(data.pop(4), byteorder='big', signed=False)
-        if self.cc_length > 0:
-            self.certificate_chain = CertificateChain(data.pop(self.cc_length).decode("UTF-8"))
+        # self.cc_length = int.from_bytes(data.pop(4), byteorder='big', signed=False)
+        # if self.cc_length > 0:
+        #     self.certificate_chain = CertificateChain(data.pop(self.cc_length).decode("UTF-8"))
 
     @classmethod
     def from_values(cls, session_id, keys, certificate_chain):
@@ -279,33 +279,33 @@ class DRKeySendKeys(DRKeyPayloadBase):
     def pack(self):
         self.keys_length = len(self.keys)
 
-        if self.certificate_chain:
-            certificate_chain = self.certificate_chain.pack()
-            self.cc_length = len(certificate_chain)
-        else:
-            certificate_chain = None
-            self.cc_length = 0
+        # if self.certificate_chain:
+        #     certificate_chain = self.certificate_chain.pack()
+        #     self.cc_length = len(certificate_chain)
+        # else:
+        #     certificate_chain = None
+        #     self.cc_length = 0
 
         packed = []
         packed.append(self.session_id)
         packed.append(struct.pack("!H", self.keys_length))
         for key in self.keys:
             packed.append(key)
-        packed.append(struct.pack("!I", self.cc_length))
-        if certificate_chain:
-            packed.append(certificate_chain)
+        # packed.append(struct.pack("!I", self.cc_length))
+        # if certificate_chain:
+        #     packed.append(certificate_chain)
         return b"".join(packed)
 
     def __len__(self):  # pragma: no cover
         if not self.keys_length:
             self.keys_length = len(self.keys)
-        if not self.cc_length:
-            if self.certificate_chain:
-                self.cc_length = len(self.certificate_chain.pack())
-            else:
-                self.cc_length = 0
+        # if not self.cc_length:
+        #     if self.certificate_chain:
+        #         self.cc_length = len(self.certificate_chain.pack())
+        #     else:
+        #         self.cc_length = 0
         return DRKeyConstants.SESSION_ID_BYTE_LENGTH + \
-            2 + self.keys_length * DRKeyConstants.DRKEY_LENGTH + 4 + self.cc_length
+            2 + self.keys_length * DRKeyConstants.DRKEY_LENGTH  # + 4 + self.cc_length
 
     def __str__(self):
         return "[%s(%dB): Keys: %s]" % (
