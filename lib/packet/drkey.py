@@ -37,7 +37,7 @@ class DRKeyConstants(object):
     """
     Constants for drkey.
     """
-    DRKEY_LENGTH = 16
+    DRKEY_BYTE_LENGTH = 16
     SESSION_ID_BYTE_LENGTH = 16
 
 
@@ -251,7 +251,7 @@ class DRKeySendKeys(DRKeyPayloadBase):
         self.keys_length = int.from_bytes(data.pop(2), byteorder='big', signed=False)
         self.keys = []
         for _ in range(self.keys_length):
-            self.keys.append(data.pop(DRKeyConstants.DRKEY_LENGTH))
+            self.keys.append(data.pop(DRKeyConstants.DRKEY_BYTE_LENGTH))
 
     @classmethod
     def from_values(cls, session_id, keys):
@@ -281,7 +281,7 @@ class DRKeySendKeys(DRKeyPayloadBase):
         if not self.keys_length:
             self.keys_length = len(self.keys)
         return DRKeyConstants.SESSION_ID_BYTE_LENGTH + \
-            2 + self.keys_length * DRKeyConstants.DRKEY_LENGTH
+            2 + self.keys_length * DRKeyConstants.DRKEY_BYTE_LENGTH
 
     def __str__(self):
         return "[%s(%dB): Keys: %s]" % (
@@ -317,7 +317,7 @@ class DRKeyAcknowledgeKeys(DRKeyPayloadBase):
         """
         data = Raw(raw, self.NAME, len(raw))
         self.session_id = data.pop(DRKeyConstants.SESSION_ID_BYTE_LENGTH)
-        self.src_key = data.pop(DRKeyConstants.DRKEY_LENGTH)
+        self.src_key = data.pop(DRKeyConstants.DRKEY_BYTE_LENGTH)
         self.sign_length = int.from_bytes(data.pop(2), byteorder='big', signed=False)
         self.signature = data.pop(self.sign_length)
 
@@ -350,7 +350,7 @@ class DRKeyAcknowledgeKeys(DRKeyPayloadBase):
     def __len__(self):  # pragma: no cover
         if not self.sign_length:
             self.sign_length = len(self.signature)
-        return DRKeyConstants.SESSION_ID_BYTE_LENGTH + DRKeyConstants.DRKEY_LENGTH + 2 + self.sign_length
+        return DRKeyConstants.SESSION_ID_BYTE_LENGTH + DRKeyConstants.DRKEY_BYTE_LENGTH + 2 + self.sign_length
 
     def __str__(self):
         return "[%s(%dB): Session ID: %s Key: %s Signature: %s]" % (
