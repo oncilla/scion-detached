@@ -520,9 +520,8 @@ class SCIONDaemon(SCIONElement):
         drkeys = self._get_keys_from_map(session_id)
         if not drkeys:
             return
-        local_key = self._get_drkey_source(session_id)
-        remote_key = self._get_drkey_destination(session_id)
-        self._drkeys_local[session_id] = (local_key, drkeys, remote_key, False)
+        remote_key = self._get_remote_drkey(session_id)
+        self._drkeys_local[session_id] = (None, drkeys, remote_key, False)
         request[1].set()
 
     def _start_drkey_exchange(self, dst, path, session_id):
@@ -583,7 +582,7 @@ class SCIONDaemon(SCIONElement):
         dst, path, keys, _ = req
 
         cert_chain = self.trust_store.get_cert(self.addr.isd_as)
-        key_list = [keys.src_key] + keys.intermediate_keys + [keys.dst_key]
+        key_list = keys.intermediate_keys + [keys.dst_key]
         snd = DRKeySendKeys.from_values(session_id, key_list, cert_chain)
         pkt = self._build_packet(
             dst.host, path=path, dst_ia=dst.isd_as, payload=snd, dst_port=SCION_UDP_PORT)
@@ -612,28 +611,20 @@ class SCIONDaemon(SCIONElement):
         """
 
         e = threading.Event()
+        assert keys.intermediate_keys
+        assert keys.dst_key
         self._drkey_sends.put((session_id, (dst, path, keys, e)))
         return e
 
-    def _get_drkey_destination(self, session_id):
+    def _get_remote_drkey(self, session_id):
         """
-        Computes session key for the destination.
+        Computes session key for the remote host.
 
         :param session_id: session id (16 B)
         :type session_id: bytes
         :return: bytes (16 B)
         """
         return compute_session_key(self._secret_value, session_id)
-
-    def _get_drkey_source(self, session_id):
-        """
-        Computes session key for the source.
-
-        :param session_id: session id (16 B)
-        :type session_id: bytes
-        :return: bytes (16 B)
-        """
-        return compute_session_key(self._secret_value, self._get_drkey_destination(session_id))
 
     def init_drkeys(self, dst, path, session_id, non_blocking=False):
         """
@@ -686,7 +677,7 @@ class SCIONDaemon(SCIONElement):
         if session_id in self._drkeys_local:
             key_tuple = self._drkeys_local[session_id]
             return DRKeys(key_tuple[0], key_tuple[1], key_tuple[2], True)
-        return DRKeys(self._get_drkey_source(session_id), None, self._get_drkey_destination(session_id), True)
+        return DRKeys(None, None, self._get_remote_drkey(session_id), True)
 
     def _get_keys_from_map(self, session_id):
         if session_id in self._session_drkeys_map:
@@ -792,7 +783,6 @@ class SCIONDaemon(SCIONElement):
         """
         Handle a DRKey send payload.
         Receive DRKeys for a given session. In return send the src_drkey to acknowledge.
------------------------------------------------------------------------------------------------------------------
         :param pkt: packet containing the send payload
         :type pkt: SCIONL4Packet
         """
@@ -803,13 +793,15 @@ class SCIONDaemon(SCIONElement):
 
         # TODO(rsd) check authenticity when e2 shared key is available
 
-        self._drkeys_remote[payload.session_id] = DRKeys.from_bytes_list(payload.keys)
+        drkeys = DRKeys.from_bytes_list(payload.keys, self._get_remote_drkey(payload.session_id))
+        self._drkeys_remote[payload.session_id] = drkeys
         logging.debug("Added: %s", self._drkeys_remote[payload.session_id])
 
         # TODO(rsd) sign with shared secret e2e
         signature = sign(payload.session_id, self._private_key)
         pkt.reverse()
-        pkt.set_payload(DRKeyAcknowledgeKeys.from_values(payload.session_id, signature))
+        assert drkeys.src_key
+        pkt.set_payload(DRKeyAcknowledgeKeys.from_values(payload.session_id, drkeys.src_key, signature))
         self.send(pkt, pkt.addrs.dst.host, pkt.l4_hdr.dst_port)
 
     def handle_drkey_ack(self, pkt):
@@ -829,7 +821,7 @@ class SCIONDaemon(SCIONElement):
         if not tup:
             logging.info("Received drkey ack for inexistent session_id: %s from %s", payload.session_id, pkt.addrs.src)
             return
-        self._drkeys_local[payload.session_id] = (tup[0], tup[1], tup[2], True)
+        self._drkeys_local[payload.session_id] = (payload.src_key, tup[1], tup[2], True)
         self._drkey_sends.put((payload.session_id, None))
         self._session_drkeys_map.pop(payload.session_id, None)
 
@@ -857,6 +849,7 @@ class SCIONDaemon(SCIONElement):
         next_hop = self.ifid2addr[if_id]
         logging.debug("Next hop: %s", next_hop)
         self.send(pkt, next_hop)
+
 
 class SessionNotAvailableError(Exception):
     def __str__(self):

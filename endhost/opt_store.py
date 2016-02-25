@@ -233,5 +233,5 @@ class DRKeys(object):
         return "[src: %s]\n[int: %s]\n[dst: %s]" % (self.src_key, self.intermediate_keys, self.dst_key)
 
     @classmethod
-    def from_bytes_list(cls, bytes_list):
-        return DRKeys(bytes_list[0], bytes_list[1:-1], bytes_list[-1], False)
+    def from_bytes_list(cls, bytes_list, src_key):
+        return DRKeys(src_key, bytes_list[0:-1], bytes_list[-1], False)

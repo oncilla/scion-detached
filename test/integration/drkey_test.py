@@ -190,6 +190,8 @@ class TestSCIONDaemon(object):
                 self._run_test(ISD_AS.from_values(*src_ia),
                                ISD_AS.from_values(*dst_ia))
 
+        logging.debug("Test successful")
+
     def _run_test(self, src_ia, dst_ia):
         logging.info("Testing: %s -> %s", src_ia, dst_ia)
         src_addr = SCIONAddr.from_values(src_ia, self.client_ip)
@@ -213,6 +215,10 @@ class TestSCIONDaemon(object):
             sys.exit(1)
 
         logging.debug("%s\n%s", ping_app.keys, pong_app.keys)
+        assert isinstance(ping_app.keys, DRKeys)
+        assert ping_app.keys.src_key is not None
+        assert ping_app.keys.dst_key is not None
+        assert ping_app.keys.intermediate_keys is not None
         assert ping_app.keys == pong_app.keys
 
 

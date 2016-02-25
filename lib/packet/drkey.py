@@ -37,6 +37,7 @@ class DRKeyConstants(object):
     """
     Constants for drkey.
     """
+    DRKEY_LENGTH = 16
     SESSION_ID_BYTE_LENGTH = 16
 
 
@@ -252,7 +253,7 @@ class DRKeySendKeys(DRKeyPayloadBase):
         self.keys_length = int.from_bytes(data.pop(2), byteorder='big', signed=False)
         self.keys = []
         for _ in range(self.keys_length):
-            self.keys.append(data.pop(DRKeyConstants.SESSION_ID_BYTE_LENGTH))
+            self.keys.append(data.pop(DRKeyConstants.DRKEY_LENGTH))
         self.cc_length = int.from_bytes(data.pop(4), byteorder='big', signed=False)
         if self.cc_length > 0:
             self.certificate_chain = CertificateChain(data.pop(self.cc_length).decode("UTF-8"))
@@ -304,7 +305,7 @@ class DRKeySendKeys(DRKeyPayloadBase):
             else:
                 self.cc_length = 0
         return DRKeyConstants.SESSION_ID_BYTE_LENGTH + \
-            2 + self.keys_length * DRKeyConstants.SESSION_ID_BYTE_LENGTH + 4 + self.cc_length
+            2 + self.keys_length * DRKeyConstants.DRKEY_LENGTH + 4 + self.cc_length
 
     def __str__(self):
         return "[%s(%dB): Keys: %s]" % (
@@ -329,6 +330,7 @@ class DRKeyAcknowledgeKeys(DRKeyPayloadBase):
         super().__init__()
         self.session_id = None
         self.sign_length = None
+        self.src_key = None
         self.signature = None
         # self.cc_length = None
         # self.certificate_chain = None
@@ -341,23 +343,27 @@ class DRKeyAcknowledgeKeys(DRKeyPayloadBase):
         """
         data = Raw(raw, self.NAME, len(raw))
         self.session_id = data.pop(DRKeyConstants.SESSION_ID_BYTE_LENGTH)
+        self.src_key = data.pop(DRKeyConstants.DRKEY_LENGTH)
         self.sign_length = int.from_bytes(data.pop(2), byteorder='big', signed=False)
         self.signature = data.pop(self.sign_length)
         # self.cc_length = int.from_bytes(data.pop(4), byteorder='big', signed=False)
         # self.certificate_chain = CertificateChain(data.pop(self.cc_length).decode("UTF-8"))
 
     @classmethod
-    def from_values(cls, session_id, signature):
+    def from_values(cls, session_id, src_key, signature):
         """
         Returns PathSegmentInfo with fields populated from values.
         :param session_id: session id of the flow (16 B)
         :type session_id: bytes
+        :param key_src: the computed key of the origin of the drkey exchange (16 B)
+        :type key_src: bytes
         :param signature: signature
         :type signature: bytes
         """
         inst = cls()
         inst.session_id = session_id
         inst.signature = signature
+        inst.src_key = src_key
         # inst.certificate_chain = certificate_chain
         return inst
 
@@ -367,6 +373,7 @@ class DRKeyAcknowledgeKeys(DRKeyPayloadBase):
         # self.cc_length = len(certificate_chain)
         packed = []
         packed.append(self.session_id)
+        packed.append(self.src_key)
         packed.append(struct.pack("!H", self.sign_length))
         packed.append(self.signature)
         # packed.append(struct.pack("!I", self.cc_length))
@@ -377,12 +384,12 @@ class DRKeyAcknowledgeKeys(DRKeyPayloadBase):
         if not self.sign_length:
             self.sign_length = len(self.signature)
         # if not self.cc_length:
-        #    self.cc_length = len(self.certificate_chain.pack())
-        return 16 + 2 + self.sign_length  # + 4 + self.cc_length
+        #    self.cc_length = len(self.certificate_chain.pack())  DONT FORGET LINE BELOW
+        return DRKeyConstants.SESSION_ID_BYTE_LENGTH + DRKeyConstants.DRKEY_LENGTH + 2 + self.sign_length
 
     def __str__(self):
-        return "[%s(%dB): Signature: %s]" % (
-            self.NAME, len(self), str(self.signature)
+        return "[%s(%dB): Session ID: %s Key: %s Signature: %s]" % (
+            self.NAME, len(self), self.session_id, self.src_key, str(self.signature)
             # , str(self.certificate_chain)
         )
 
