@@ -583,7 +583,7 @@ class SCIONDaemon(SCIONElement):
 
         cert_chain = self.trust_store.get_cert(self.addr.isd_as)
         key_list = keys.intermediate_keys + [keys.dst_key]
-        snd = DRKeySendKeys.from_values(session_id, key_list, cert_chain)
+        snd = DRKeySendKeys.from_values(session_id, key_list)
         pkt = self._build_packet(
             dst.host, path=path, dst_ia=dst.isd_as, payload=snd, dst_port=SCION_UDP_PORT)
         self.send(pkt, dst.host)
