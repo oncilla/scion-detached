@@ -156,7 +156,7 @@ class Pong(object):
             assert next_hop is not None
             self.sd.send(spkt, next_hop, port)
 
-        while not self.sd.get_drkeys(self.session_id).intermediate_keys:
+        while self.sd.get_drkeys(self.session_id).intermediate_keys is None:
             time.sleep(0.0001)
 
         self.keys = self.sd.get_drkeys(self.session_id)

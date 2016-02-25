@@ -505,14 +505,14 @@ class SCIONDaemon(SCIONElement):
                 isd_as = ISD_AS(raw=dict_tuple[0])
                 req = DRKeyRequestKey.from_values(dict_tuple[1][0], session_id, self._public_key)
                 pkt = self._build_packet(PT.CERT_MGMT, path=path, dst_ia=isd_as, payload=req)
-                self._send_to_next_hop(pkt, path)
+                self._send_to_next_hop(pkt)
 
     def _reply_drkeys(self, session_id, request):
         """
         Called by RequestHandler to signal that the request has been fulfilled.
         Stores a tuple in the _drkeys_local map.
         The corresponding session in the _session_drkeys_map will only be popped
-        after a successfully sharing the drkeys.
+        after successfully sharing the drkeys.
 
         :param request: (Path, threading Event) pair
         :type request: (PathBase, Event)
@@ -530,13 +530,13 @@ class SCIONDaemon(SCIONElement):
 
         :param dst: destination address
         :type dst: SCIONAddr
-        :param path: chosen path to the address. Make sure path.interfaces is not an empty list or path is EmptyPath
+        :param path: chosen path to the address. Make sure path.interfaces is defined and not empty.
         :type path: PathBase
         :param session_id: session id (16 B)
         :type session_id: bytes
         :return Event
         """
-        assert (path.interfaces or isinstance(path, EmptyPath))
+        assert path.interfaces
 
         for isd_as in [inf[0] for inf in path.interfaces]:
             logging.debug("Interface on path: %s", isd_as)
@@ -603,7 +603,7 @@ class SCIONDaemon(SCIONElement):
 
         :param dst: destination address
         :type dst: SCIONAddr
-        :param path: path to destination. Make sure either path.interfaces is not empty or path is EmptyPath.
+        :param path: path to destination.
         :type path: PathBase
         :param session_id: session id of the flow (16 B)
         :type session_id: bytes
@@ -611,7 +611,7 @@ class SCIONDaemon(SCIONElement):
         """
 
         e = threading.Event()
-        assert keys.intermediate_keys
+        assert keys.intermediate_keys is not None
         assert keys.dst_key
         self._drkey_sends.put((session_id, (dst, path, keys, e)))
         return e
@@ -632,7 +632,7 @@ class SCIONDaemon(SCIONElement):
         In blocking mode (default), this call blocks until all intermediate drkeys have been received.
         The path specified has to be the same as the one used for later traffic.
         If the destination is not in the same AS, path.interfaces must be non empty.
-        If the destination is in the same AS, the path has to be of type EmptyPath.
+        If the destination is in the same AS, the intermediate keys will be an empty list.
 
         :param dst: address of the destination
         :type dst: SCIONAddr
@@ -645,6 +645,10 @@ class SCIONDaemon(SCIONElement):
         """
 
         assert (path.interfaces or isinstance(path, EmptyPath))
+
+        if isinstance(path, EmptyPath):
+            self._drkeys_local[session_id] = (None, [], self._get_remote_drkey(session_id), False)
+            return
 
         e = self._start_drkey_exchange(dst, path, session_id)
 
@@ -704,13 +708,14 @@ class SCIONDaemon(SCIONElement):
         if non_blocking:
             drkeys = self.get_drkeys(session_id)
             assert isinstance(drkeys, DRKeys)
-            if not drkeys.intermediate_keys:
+            if drkeys.intermediate_keys is None:
                 return False
             self._start_sending_drkeys(dst, path, session_id, drkeys)
 
         # handle blocking case
         drkeys = self.get_drkeys(session_id)
-        if not drkeys.intermediate_keys:
+        if drkeys.intermediate_keys is None:
+            logging.info("keys not initialized, waiting... ")
             self.init_drkeys(dst, path, session_id)
             drkeys = self.get_drkeys(session_id)
 
@@ -827,7 +832,7 @@ class SCIONDaemon(SCIONElement):
 
         logging.debug("Handle DRKey ack %s", pkt.get_payload())
 
-    def _send_to_next_hop(self, pkt, path):
+    def _send_to_next_hop(self, pkt):
         """
         Sends the packet to the next hop on the path. If path is EmptyPath it is sent to one random interface.
 
@@ -836,19 +841,10 @@ class SCIONDaemon(SCIONElement):
         :param path: The path
         :type path: PathBase
         """
-        if_id = path.get_fwd_if()
-
-        if isinstance(path, EmptyPath):
-            # Dirty hack, choose any interface, the router will catch the packet anyway
-            if_id = list(self.ifid2addr.keys())[0]
-
-        if if_id not in self.ifid2addr:
-            logging.error("Interface ID %d not found in ifid2addr.", if_id)
-            return
-
-        next_hop = self.ifid2addr[if_id]
-        logging.debug("Next hop: %s", next_hop)
-        self.send(pkt, next_hop)
+        next_hop, port = self.get_first_hop(pkt)
+        assert next_hop is not None
+        logging.info("Sending packet via (%s:%s):\n%s", next_hop, port, pkt)
+        self.send(pkt, next_hop, port)
 
 
 class SessionNotAvailableError(Exception):
