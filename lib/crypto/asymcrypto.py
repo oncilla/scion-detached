@@ -95,7 +95,7 @@ def encrypt_session_key(private_key, public_key, msg):
     return encrypted
 
 
-def decrypt_session_key(private_key, public_key, cypher):
+def decrypt_session_key(private_key, public_key, cipher):
     """
     Decrypt the session key in the DRKey exchange.
 
@@ -103,12 +103,12 @@ def decrypt_session_key(private_key, public_key, cypher):
     :type private_key: bytes
     :param public_key: public key of the certificate server (32 B)
     :type public_key: bytes
-    :param cypher: encrypted session key (16 B)
-    :type cypher: bytes
+    :param cipher: encrypted session key (16 B)
+    :type cipher: bytes
     :return: decrypted session key
     """
     sk = PrivateKey(private_key)
     pk = PublicKey(public_key)
     box = Box(sk, pk)
-    encrypted = box.decrypt(cypher)
+    encrypted = box.decrypt(cipher)
     return encrypted

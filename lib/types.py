@@ -133,6 +133,8 @@ class DRKeyType(TypeBase):
     REPLY_KEY = 1
     SEND_KEYS = 2
     ACKNOWLEDGE_KEYS = 3
+    REQUEST_CERT_CHAIN = 4
+    REPLY_CERT_CHAIN = 5
 
 class SIBRAPayloadType(TypeBase):
     EMPTY = 0

@@ -25,18 +25,21 @@ from itertools import product
 # SCION
 import time
 from nacl.public import PrivateKey
+from nacl.signing import SigningKey
 from nacl.utils import random as random_bytes
 
 from endhost.opt_store import DRKeys
 from infrastructure.scion_elem import SCIONElement
-from lib.crypto.asymcrypto import decrypt_session_key, sign, verify
-from lib.crypto.certificate import TRC, CertificateChain
+from lib.crypto.asymcrypto import decrypt_session_key, sign, verify, encrypt_session_key, generate_enc_pub_key
+from lib.crypto.certificate import TRC, CertificateChain, Certificate
 from lib.crypto.hash_chain import HashChain
 from lib.crypto.symcrypto import compute_session_key
 from lib.defines import PATH_SERVICE, SCION_UDP_PORT
 from lib.errors import SCIONServiceLookupError
 from lib.log import log_exception
-from lib.packet.drkey import DRKeyRequestKey, DRKeyReplyKey, DRKeyAcknowledgeKeys, DRKeySendKeys
+from lib.packet.cert_mgmt import CertMgmtRequest
+from lib.packet.drkey import DRKeyRequestKey, DRKeyReplyKey, DRKeyAcknowledgeKeys, DRKeySendKeys, DRKeyConstants, \
+    DRKeyReplyCertChain, DRKeyRequestCertChain
 from lib.packet.host_addr import haddr_parse, HostAddrIPv4
 from lib.packet.path import EmptyPath, PathCombinator, PathBase
 from lib.packet.path_mgmt import PathSegmentInfo
@@ -54,10 +57,37 @@ from lib.types import (
     PathSegmentType as PST,
     PayloadClass,
 )
-from lib.util import SCIONTime
+from lib.util import SCIONTime, Raw, read_file, get_sig_key_file_path
 
 SCIOND_API_HOST = "127.255.255.254"
 SCIOND_API_PORT = 3333
+
+
+def key_list_from_bytes(raw):
+    """
+    Split bytes into a list of keys
+
+    :param raw: a blob of bytes, containing the keys
+    :type raw: bytes
+    :return: [bytes]
+    """
+    data = Raw(raw)
+    key_list = []
+
+    while len(data) > 0:
+        key_list.append(data.pop(DRKeyConstants.DRKEY_BYTE_LENGTH))
+    return key_list
+
+
+def bytes_from_key_list(key_list):
+    """
+    Join list of keys into bytes
+
+    :param key_list: list of drkeys
+    :type key_list: [bytes]
+    :return: bytes
+    """
+    return b"".join(key_list)
 
 
 class SCIONDaemon(SCIONElement):
@@ -102,6 +132,8 @@ class SCIONDaemon(SCIONElement):
                 DRKT.ACKNOWLEDGE_KEYS: self.handle_drkey_ack,
                 DRKT.REPLY_KEY: self.handle_drkey_reply,
                 DRKT.SEND_KEYS: self.handle_drkey_send,
+                DRKT.REQUEST_CERT_CHAIN: self.handle_drkey_cc_req,
+                DRKT.REPLY_CERT_CHAIN: self.handle_drkey_cc_rep,
             }
         }
         if run_local_api:
@@ -503,7 +535,7 @@ class SCIONDaemon(SCIONElement):
         for dict_tuple in self._session_drkeys_map[session_id][1].items():
             if not dict_tuple[1][1]:  # session key has not yet been received
                 isd_as = ISD_AS(raw=dict_tuple[0])
-                req = DRKeyRequestKey.from_values(dict_tuple[1][0], session_id, self._public_key)
+                req = DRKeyRequestKey.from_values(dict_tuple[1][0], session_id, self.get_certificate_chain())
                 pkt = self._build_packet(PT.CERT_MGMT, path=path, dst_ia=isd_as, payload=req)
                 self._send_to_next_hop(pkt)
 
@@ -581,9 +613,23 @@ class SCIONDaemon(SCIONElement):
         """
         dst, path, keys, _ = req
 
-        cert_chain = self.trust_store.get_cert(self.addr.isd_as)
+        cert_local = self.get_certificate_chain()
+        cert_remote = self.trust_store.get_cert(dst.isd_as)
+        if not cert_remote:
+            # dirty hack
+            snd = DRKeyRequestCertChain()
+            pkt = self._build_packet(dst.host, path=path, dst_ia=dst.isd_as, payload=snd, dst_port=SCION_UDP_PORT)
+            self.send(pkt, dst.host)
+            return
+
+        cert_remote = cert_remote.certs[0]
+
+        assert isinstance(cert_remote, Certificate)
+
         key_list = keys.intermediate_keys + [keys.dst_key]
-        snd = DRKeySendKeys.from_values(session_id, key_list)
+        cipher = encrypt_session_key(self._private_key, cert_remote.subject_enc_key, b"".join(key_list))
+        signature = sign(b"".join([cipher, session_id]), self._private_key)
+        snd = DRKeySendKeys.from_values(session_id, cipher, signature, cert_local)
         pkt = self._build_packet(
             dst.host, path=path, dst_ia=dst.isd_as, payload=snd, dst_port=SCION_UDP_PORT)
         self.send(pkt, dst.host)
@@ -750,8 +796,8 @@ class SCIONDaemon(SCIONElement):
         # Core AS -> TRC present in trust store
         if payload.certificate_chain:
             assert isinstance(payload.certificate_chain, CertificateChain)
-            trc = self.trust_store.get_trc(isd_as[0])
             certificate = payload.certificate_chain.certs[0]
+            trc = self.trust_store.get_trc(isd_as[0], certificate.version)
             if not payload.certificate_chain.verify(str(isd_as), trc, certificate.version):
                 logging.info("DRKey with invalid certificate chain from %s.\nCertificate Chain:%s\nTRC version:%s"
                              , pkt.addrs.src, payload.certificate_chain, certificate.version)
@@ -764,18 +810,13 @@ class SCIONDaemon(SCIONElement):
                 logging.info("DRKey Reply without valid certificate received from %s", pkt.addrs.src)
                 return
 
-        cypher = payload.encrypted_session_key
-
         # verify message
-        packed = []
-        packed.append(cypher)
-        packed.append(payload.session_id)
-        msg = b"".join(packed)
+        msg = b"".join([payload.cipher, payload.session_id])
         if not verify(msg, payload.signature, certificate.subject_sig_key):
             logging.info("DRKey Reply message not authentic from %s", pkt.addrs.src)
             return
 
-        session_key = decrypt_session_key(self._private_key, certificate.subject_enc_key, cypher)
+        session_key = decrypt_session_key(self._private_key, certificate.subject_enc_key, payload.cipher)
 
         isd_as_raw = isd_as.pack()
         hop, _ = self._session_drkeys_map[payload.session_id][1][isd_as_raw]
@@ -796,17 +837,36 @@ class SCIONDaemon(SCIONElement):
         payload = pkt.get_payload()
         assert isinstance(payload, DRKeySendKeys)
 
-        # TODO(rsd) check authenticity when e2 shared key is available
+        isd_as = pkt.addrs.src.isd_as
 
-        drkeys = DRKeys.from_bytes_list(payload.keys, self._get_remote_drkey(payload.session_id))
+        # check certificate chain
+        certificate = payload.certificate_chain.certs[0]
+        trc = self.trust_store.get_trc(isd_as[0], certificate.version)
+        if not payload.certificate_chain.verify(str(isd_as), trc, certificate.version):
+            logging.info("DRKey with invalid certificate chain from %s.\nCertificate Chain:%s\nTRC version:%s"
+                         , pkt.addrs.src, payload.certificate_chain, certificate.version)
+            return
+
+        # check signature
+        msg = b"".join([payload.cipher, payload.session_id])
+        if not verify(msg, payload.signature, certificate.subject_sig_key):
+            logging.info("DRKey with invalid signature from %s", pkt.addrs.src)
+            return
+
+        # get drkeys
+        key_list = key_list_from_bytes(decrypt_session_key(self._private_key, certificate.subject_enc_key, payload.cipher))
+        drkeys = DRKeys.from_bytes_list(key_list, self._get_remote_drkey(payload.session_id))
         self._drkeys_remote[payload.session_id] = drkeys
+
         logging.debug("Added: %s", self._drkeys_remote[payload.session_id])
 
-        # TODO(rsd) sign with shared secret e2e
-        signature = sign(payload.session_id, self._private_key)
+        # reply
+        cipher = encrypt_session_key(self._private_key, certificate.subject_enc_key, drkeys.src_key)
+        signature = sign(b"".join([cipher, payload.session_id]), self._private_key)
         pkt.reverse()
         assert drkeys.src_key
-        pkt.set_payload(DRKeyAcknowledgeKeys.from_values(payload.session_id, drkeys.src_key, signature))
+        pkt.set_payload(DRKeyAcknowledgeKeys.from_values(payload.session_id, cipher, signature,
+                                                         self.get_certificate_chain()))
         self.send(pkt, pkt.addrs.dst.host, pkt.l4_hdr.dst_port)
 
     def handle_drkey_ack(self, pkt):
@@ -820,17 +880,66 @@ class SCIONDaemon(SCIONElement):
         payload = pkt.get_payload()
         assert isinstance(payload, DRKeyAcknowledgeKeys)
 
-        # TODO(rsd) check authenticity when e2e shared key is available
+        isd_as = pkt.addrs.src.isd_as
+
+        # check certificate chain
+        certificate = payload.certificate_chain.certs[0]
+        trc = self.trust_store.get_trc(isd_as[0], certificate.version)
+        if not payload.certificate_chain.verify(str(isd_as), trc, certificate.version):
+            logging.info("DRKey with invalid certificate chain from %s.\nCertificate Chain:%s\nTRC version:%s"
+                         , pkt.addrs.src, payload.certificate_chain, certificate.version)
+            return
+
+        # check signature
+        msg = b"".join([payload.cipher, payload.session_id])
+        if not verify(msg, payload.signature, certificate.subject_sig_key):
+            logging.info("DRKey with invalid signature from %s", pkt.addrs.src)
+            return
+
+        session_key = decrypt_session_key(self._private_key, certificate.subject_enc_key, payload.cipher)
 
         tup = self._drkeys_local[payload.session_id]
         if not tup:
             logging.info("Received drkey ack for inexistent session_id: %s from %s", payload.session_id, pkt.addrs.src)
             return
-        self._drkeys_local[payload.session_id] = (payload.src_key, tup[1], tup[2], True)
+        self._drkeys_local[payload.session_id] = (session_key, tup[1], tup[2], True)
         self._drkey_sends.put((payload.session_id, None))
         self._session_drkeys_map.pop(payload.session_id, None)
 
         logging.debug("Handle DRKey ack %s", pkt.get_payload())
+
+    def handle_drkey_cc_req(self, pkt):
+        """
+        Handle DRKey Certificate Chain request.
+        Reply with the Certificate Chain.
+
+        :param pkt:
+        :type pkt: SCIONL4Packet
+        :return:
+        """
+
+        pkt.reverse()
+        pkt.set_payload(DRKeyReplyCertChain.from_values(self.get_certificate_chain()))
+        self.send(pkt, pkt.addrs.dst.host, pkt.l4_hdr.dst_port)
+
+    def handle_drkey_cc_rep(self, pkt):
+        """
+        Handle DRKey Certificate Chain reply.
+        Add Certificate Chain to truststore.
+
+        :param pkt:
+        :type pkt: SCIONL4Packet
+        :return:
+        """
+
+        payload = pkt.get_payload()
+        assert isinstance(payload, DRKeyReplyCertChain)
+
+        isd_as = pkt.addrs.src.isd_as
+        trc = self.trust_store.get_trc(isd_as[0])
+        if not payload.cert_chain.verify(str(isd_as), trc, trc.version):
+            logging.info("Invalid certificate chain from %s", isd_as)
+        self.trust_store.add_cert(payload.cert_chain, False)
 
     def _send_to_next_hop(self, pkt):
         """
@@ -845,6 +954,26 @@ class SCIONDaemon(SCIONElement):
         assert next_hop is not None
         logging.info("Sending packet via (%s:%s):\n%s", next_hop, port, pkt)
         self.send(pkt, next_hop, port)
+
+    def get_certificate_chain(self):
+        # TODO replace with original certificate when ready !!!!
+
+        cc = self.trust_store.get_cert(self.addr.isd_as)
+        assert isinstance(cc, CertificateChain)
+        issuer = cc.certs[0]
+        assert isinstance(issuer, Certificate)
+
+        cert = Certificate.from_dict(issuer.get_cert_dict(False))
+        cert.subject = str(self.addr.isd_as)
+        cert.subject_sig_key = SigningKey(self._private_key).verify_key.encode()
+        cert.subject_enc_key = generate_enc_pub_key(self._private_key)
+
+        issuer_key = base64.b64decode(read_file(get_sig_key_file_path(self.conf_dir)))
+        signature = sign(cert.__str__(False).encode('utf-8'), issuer_key)
+        cert.signature = signature
+        cc.certs.insert(0, cert)
+
+        return cc
 
 
 class SessionNotAvailableError(Exception):

@@ -121,7 +121,7 @@ class TestDRKeyReplyKey(object):
         ntools.eq_(inst.hop, b"hop")
         ntools.eq_(inst.session_id, b"session_id")
         ntools.eq_(inst.enc_key_length, 1)
-        ntools.eq_(inst.encrypted_session_key, b"encrypted key")
+        ntools.eq_(inst.cipher, b"encrypted key")
         ntools.eq_(inst.sign_length, 2)
         ntools.eq_(inst.signature, b"signature")
         ntools.eq_(inst.cc_length, 3)
