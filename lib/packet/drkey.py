@@ -72,7 +72,7 @@ class DRKeyRequestKey(DRKeyPayloadBase):
         self.hop = data.pop(1)
         self.session_id = data.pop(DRKeyConstants.SESSION_ID_BYTE_LENGTH)
         self.cc_length = int.from_bytes(data.pop(4), byteorder='big', signed=False)
-        self.certificate_chain = CertificateChain.parse(data.pop(self.cc_length).decode("UTF-8"))
+        self.certificate_chain = CertificateChain(data.pop(self.cc_length).decode("UTF-8"))
 
     @classmethod
     def from_values(cls, hop, session_id, certificate_chain):
@@ -354,7 +354,7 @@ class DRKeyAcknowledgeKeys(DRKeyPayloadBase):
         self.sign_length = int.from_bytes(data.pop(2), byteorder='big', signed=False)
         self.signature = data.pop(self.sign_length)
         self.cc_length = int.from_bytes(data.pop(4), byteorder='big', signed=False)
-        self.certificate_chain = data.pop(self.cc_length)
+        self.certificate_chain = CertificateChain(data.pop(self.cc_length).decode('utf-8'))
 
     @classmethod
     def from_values(cls, session_id, cipher, signature, certificate_chain):
@@ -409,29 +409,75 @@ class DRKeyRequestCertChain(DRKeyPayloadBase):
     NAME = "DRKeyRequestCertChain"
     PAYLOAD_TYPE = DRKT.REQUEST_CERT_CHAIN
 
-    def __init__(self):
-        pass
+    def __init__(self, raw=None):
+        self.session_id = None
+        if raw:
+            self._parse(raw)
 
-    def from_values(self, raw):
-        pass
+    @classmethod
+    def from_values(cls, session_id):
+        inst = cls()
+        inst.session_id = session_id
+        return inst
 
     def _parse(self, raw):
-        pass
+        data = Raw(raw, self.NAME, len(raw))
+        self.session_id = data.pop(DRKeyConstants.SESSION_ID_BYTE_LENGTH)
 
     def pack(self):
-        return struct.pack("!B", 0)
+        return b"".join([self.session_id])
 
     def __len__(self):
-        return 1
+        return DRKeyConstants.SESSION_ID_BYTE_LENGTH
 
     def __str__(self):
-        return "[DRKeyRequestCertChain]"
+        return "[DRKeyRequestCertChain Session ID:%s]" % self.session_id
 
 
-class DRKeyReplyCertChain(CertChainReply):
-    PAYLOAD_CLASS = PayloadClass.DRKEY
+class DRKeyReplyCertChain(DRKeyPayloadBase):
+
+    NAME = "DRKeyReplyCertChain"
     PAYLOAD_TYPE = DRKT.REPLY_CERT_CHAIN
 
+    def __init__(self, raw=None):  # pragma: no cover
+        """
+        :param bytes raw: packed packet.
+        """
+        super().__init__()
+        self.session_id = None
+        self.certificate_chain = None
+        if raw:
+            self._parse(raw)
+
+    def _parse(self, raw):  # pragma: no cover
+        data = Raw(raw, self.NAME)
+        self.session_id = data.pop(DRKeyConstants.SESSION_ID_BYTE_LENGTH)
+        self.certificate_chain = CertificateChain(data.pop().decode('utf-8'))
+
+    @classmethod
+    def from_values(cls, session_id, cert_chain):  # pragma: no cover
+        """
+        Return a Certificate Chain Reply with the values specified.
+
+        :param session_id:
+        :param cert_chain: requested certificate chain.
+        :type cert_chain: :class:`CertificateChain`
+        """
+        inst = cls()
+        inst.session_id = session_id
+        inst.certificate_chain = cert_chain
+        return inst
+
+    def pack(self):  # pragma: no cover
+        return b"".join([self.session_id, self.certificate_chain.pack()])
+
+    def __len__(self):  # pragma: no cover
+        return DRKeyConstants.SESSION_ID_BYTE_LENGTH + len(self.certificate_chain.pack())
+
+    def __str__(self):
+        isd_as, ver = self.certificate_chain.get_leaf_isd_as_ver()
+        return "[DRKeyReplyCertChain: %s(%dB): ISD-AS: %s Version: %s]" % (
+            self.NAME, len(self), isd_as, ver)
 
 _TYPE_MAP = {
     DRKT.REQUEST_KEY: (DRKeyRequestKey, None),

@@ -22,6 +22,8 @@ import logging
 import threading
 
 # External packages
+from idlelib.MultiCall import _SimpleBinder
+
 from Crypto.Hash import SHA256
 
 # SCION
@@ -29,6 +31,7 @@ from Crypto.Protocol.KDF import PBKDF2
 
 from infrastructure.scion_elem import SCIONElement
 from lib.crypto.asymcrypto import encrypt_session_key, sign
+from lib.crypto.certificate import CertificateChain, Certificate
 from lib.crypto.symcrypto import compute_session_key
 from lib.defines import CERTIFICATE_SERVICE, SCION_UDP_PORT
 from lib.errors import SCIONParseError
@@ -207,11 +210,22 @@ class CertServer(SCIONElement):
         :type pkt: SCIONL4Packet
         """
         drkey_request = pkt.get_payload()
-        logging.debug("Processing DRKEY request - cert: %s", str(drkey_request))
-        hop = drkey_request.hop
         assert isinstance(drkey_request, DRKeyRequestKey)
+        assert isinstance(drkey_request.certificate_chain, CertificateChain)
+        logging.debug("Processing DRKEY request %s", str(drkey_request))
+        hop = drkey_request.hop
+
+        trc = self.trust_store.get_trc(pkt.addrs.src.isd_as[0])
+        if not drkey_request.certificate_chain.verify(str(pkt.addrs.src.host), trc, trc.version):
+            logging.debug("Invalid certificate received from %s", pkt.addrs.src)
+            return
+
+        cert = drkey_request.certificate_chain.certs[0]
+        assert isinstance(cert, Certificate)
+        public_key = cert.subject_enc_key
+
         self.drkey_requests.put(
-            ((drkey_request.session_id, drkey_request.public_key), (pkt.addrs.src, pkt.l4_hdr.src_port, hop))
+            ((drkey_request.session_id, public_key), (pkt.addrs.src, pkt.l4_hdr.src_port, hop))
         )
 
     def _check_drkey(self, key):
@@ -237,10 +251,7 @@ class CertServer(SCIONElement):
         session_key = compute_session_key(self.opt_secret_value, session_id)
         enc_session_key = encrypt_session_key(private_key, public_key, session_key)
 
-        packed = []
-        packed.append(enc_session_key)
-        packed.append(session_id)
-        msg = b"".join(packed)
+        msg = b"".join([enc_session_key, session_id])
 
         signature = sign(msg, private_key)
         cert_chain = None

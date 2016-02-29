@@ -149,7 +149,7 @@ class SCIONDaemon(SCIONElement):
         self._secret_value = random_bytes(16)
         self._session_drkeys_map = dict()  # {session_id: [path_length, {isd_ad: (hop, session_key)}]}
         self._drkeys_remote = dict()  # {session_id: DRkeys}
-        self._drkeys_local = dict()  # {session_id: (key_local, [keys_intermediate], key_remote, remote_received)}
+        self._drkeys_local = dict()  # {session_id: (key_local, [keys_intermediate], key_remote, remote_received, cert)}
 
         self._drkey_requests = RequestHandler.start(
             "SCIONDaemon DRKey Requests", self._check_drkeys, self._fetch_drkeys,
@@ -553,7 +553,7 @@ class SCIONDaemon(SCIONElement):
         if not drkeys:
             return
         remote_key = self._get_remote_drkey(session_id)
-        self._drkeys_local[session_id] = (None, drkeys, remote_key, False)
+        self._drkeys_local[session_id] = (None, drkeys, remote_key, False, None)
         request[1].set()
 
     def _start_drkey_exchange(self, dst, path, session_id):
@@ -614,10 +614,10 @@ class SCIONDaemon(SCIONElement):
         dst, path, keys, _ = req
 
         cert_local = self.get_certificate_chain()
-        cert_remote = self.trust_store.get_cert(dst.isd_as)
+        cert_remote = self._drkeys_local[session_id][4]
         if not cert_remote:
             # dirty hack
-            snd = DRKeyRequestCertChain()
+            snd = DRKeyRequestCertChain.from_values(session_id)
             pkt = self._build_packet(dst.host, path=path, dst_ia=dst.isd_as, payload=snd, dst_port=SCION_UDP_PORT)
             self.send(pkt, dst.host)
             return
@@ -693,7 +693,7 @@ class SCIONDaemon(SCIONElement):
         assert (path.interfaces or isinstance(path, EmptyPath))
 
         if isinstance(path, EmptyPath):
-            self._drkeys_local[session_id] = (None, [], self._get_remote_drkey(session_id), False)
+            self._drkeys_local[session_id] = (None, [], self._get_remote_drkey(session_id), False, None)
             return
 
         e = self._start_drkey_exchange(dst, path, session_id)
@@ -842,7 +842,7 @@ class SCIONDaemon(SCIONElement):
         # check certificate chain
         certificate = payload.certificate_chain.certs[0]
         trc = self.trust_store.get_trc(isd_as[0], certificate.version)
-        if not payload.certificate_chain.verify(str(isd_as), trc, certificate.version):
+        if not payload.certificate_chain.verify(str(pkt.addrs.src.host), trc, certificate.version):
             logging.info("DRKey with invalid certificate chain from %s.\nCertificate Chain:%s\nTRC version:%s"
                          , pkt.addrs.src, payload.certificate_chain, certificate.version)
             return
@@ -885,7 +885,7 @@ class SCIONDaemon(SCIONElement):
         # check certificate chain
         certificate = payload.certificate_chain.certs[0]
         trc = self.trust_store.get_trc(isd_as[0], certificate.version)
-        if not payload.certificate_chain.verify(str(isd_as), trc, certificate.version):
+        if not payload.certificate_chain.verify(str(pkt.addrs.src.host), trc, certificate.version):
             logging.info("DRKey with invalid certificate chain from %s.\nCertificate Chain:%s\nTRC version:%s"
                          , pkt.addrs.src, payload.certificate_chain, certificate.version)
             return
@@ -902,7 +902,7 @@ class SCIONDaemon(SCIONElement):
         if not tup:
             logging.info("Received drkey ack for inexistent session_id: %s from %s", payload.session_id, pkt.addrs.src)
             return
-        self._drkeys_local[payload.session_id] = (session_key, tup[1], tup[2], True)
+        self._drkeys_local[payload.session_id] = (session_key, tup[1], tup[2], True, None)
         self._drkey_sends.put((payload.session_id, None))
         self._session_drkeys_map.pop(payload.session_id, None)
 
@@ -917,15 +917,15 @@ class SCIONDaemon(SCIONElement):
         :type pkt: SCIONL4Packet
         :return:
         """
-
+        payload = pkt.get_payload()
         pkt.reverse()
-        pkt.set_payload(DRKeyReplyCertChain.from_values(self.get_certificate_chain()))
+        pkt.set_payload(DRKeyReplyCertChain.from_values(payload.session_id, self.get_certificate_chain()))
         self.send(pkt, pkt.addrs.dst.host, pkt.l4_hdr.dst_port)
 
     def handle_drkey_cc_rep(self, pkt):
         """
         Handle DRKey Certificate Chain reply.
-        Add Certificate Chain to truststore.
+        Add Certificate Chain to _drkeys_local.
 
         :param pkt:
         :type pkt: SCIONL4Packet
@@ -937,9 +937,15 @@ class SCIONDaemon(SCIONElement):
 
         isd_as = pkt.addrs.src.isd_as
         trc = self.trust_store.get_trc(isd_as[0])
-        if not payload.cert_chain.verify(str(isd_as), trc, trc.version):
+        if not payload.certificate_chain.verify(str(isd_as), trc, trc.version):
             logging.info("Invalid certificate chain from %s", isd_as)
-        self.trust_store.add_cert(payload.cert_chain, False)
+        tup = self._drkeys_local[payload.session_id]
+        if not tup:
+            logging.info("Received drkey cert chain reply for inexistent session_id: %s from %s", payload.session_id, pkt.addrs.src)
+            return
+        self._drkeys_local[payload.session_id] = (tup[0], tup[1], tup[2], tup[3], payload.certificate_chain)
+        self._drkey_sends.put((payload.session_id, None))
+
 
     def _send_to_next_hop(self, pkt):
         """
@@ -959,12 +965,19 @@ class SCIONDaemon(SCIONElement):
         # TODO replace with original certificate when ready !!!!
 
         cc = self.trust_store.get_cert(self.addr.isd_as)
-        assert isinstance(cc, CertificateChain)
-        issuer = cc.certs[0]
-        assert isinstance(issuer, Certificate)
 
-        cert = Certificate.from_dict(issuer.get_cert_dict(False))
-        cert.subject = str(self.addr.isd_as)
+        if not cc:
+            trc = self.trust_store.get_trc(self.addr.isd_as[0])
+            assert isinstance(trc, TRC)
+            issuer = trc.core_ases[str(self.addr.isd_as)]
+            cc = CertificateChain()
+            cc.certs.append(issuer)
+        else:
+            issuer = cc.certs[0]
+            cc = CertificateChain(cc.pack().decode('utf-8'))
+
+        cert = Certificate.from_dict(issuer.get_cert_dict(True))
+        cert.subject = str(self.addr.host)
         cert.subject_sig_key = SigningKey(self._private_key).verify_key.encode()
         cert.subject_enc_key = generate_enc_pub_key(self._private_key)
 
