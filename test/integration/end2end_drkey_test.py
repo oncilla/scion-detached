@@ -22,36 +22,30 @@ import copy
 import logging
 import os
 import random
-import struct
 import sys
 import threading
 import time
-import unittest
 
 # PyNaCl
 from nacl.utils import random as rand_nonce
 
 # SCION
-from endhost.opt_store import DRKeys
-from endhost.sciond import SCIOND_API_HOST, SCIOND_API_PORT, SCIONDaemon
+from lib.opt.util import DRKeys
+from endhost.sciond import SCIONDaemon
 from lib.defines import AS_LIST_FILE, GEN_PATH
 from lib.log import init_logging
 from lib.main import main_wrapper
 from lib.packet.host_addr import (
-    haddr_get_type,
-    haddr_parse,
     haddr_parse_interface,
 )
-from lib.packet.opaque_field import InfoOpaqueField
 from lib.packet.packet_base import PayloadRaw
-from lib.packet.path import CorePath, CrossOverPath, EmptyPath, PeerPath
 from lib.packet.scion import SCIONL4Packet, build_base_hdrs
 from lib.packet.scion_addr import SCIONAddr, ISD_AS
 from lib.packet.scion_udp import SCIONUDPHeader
 from lib.socket import UDPSocket
 from lib.thread import kill_self, thread_safety_net
-from lib.types import AddrType, OpaqueFieldType as OFT
-from lib.util import Raw, handle_signals, load_yaml_file
+from lib.types import AddrType
+from lib.util import handle_signals, load_yaml_file
 
 TOUT = 10  # How long wait for response.
 

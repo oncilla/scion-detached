@@ -16,7 +16,7 @@
 =====================================================
 """
 # Stdlib
-from unittest.mock import patch, call
+from unittest.mock import patch
 
 # External packages
 import nose
@@ -24,7 +24,7 @@ import nose.tools as ntools
 
 # SCION
 from lib.errors import SCIONParseError
-from lib.packet.drkey import (
+from lib.opt.ext.drkey import (
     DRKeyRequestKey,
     DRKeyReplyKey,
     DRKeySendKeys,
@@ -32,7 +32,6 @@ from lib.packet.drkey import (
     parse_drkey_payload,
     DRKeyConstants)
 from test.testcommon import (
-    assert_these_calls,
     create_mock,
 )
 

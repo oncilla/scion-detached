@@ -22,7 +22,6 @@ import logging
 import threading
 
 # External packages
-from idlelib.MultiCall import _SimpleBinder
 
 from Crypto.Hash import SHA256
 
@@ -43,7 +42,7 @@ from lib.packet.cert_mgmt import (
     TRCReply,
     TRCRequest,
 )
-from lib.packet.drkey import (
+from lib.opt.ext.drkey import (
     DRKeyRequestKey,
     DRKeyReplyKey
 )

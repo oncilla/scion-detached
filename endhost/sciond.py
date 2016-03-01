@@ -23,12 +23,11 @@ import threading
 from itertools import product
 
 # SCION
-import time
 from nacl.public import PrivateKey
 from nacl.signing import SigningKey
 from nacl.utils import random as random_bytes
 
-from endhost.opt_store import DRKeys
+from lib.opt.util import DRKeys
 from infrastructure.scion_elem import SCIONElement
 from lib.crypto.asymcrypto import decrypt_session_key, sign, verify, encrypt_session_key, generate_enc_pub_key
 from lib.crypto.certificate import TRC, CertificateChain, Certificate
@@ -37,14 +36,12 @@ from lib.crypto.symcrypto import compute_session_key
 from lib.defines import PATH_SERVICE, SCION_UDP_PORT
 from lib.errors import SCIONServiceLookupError
 from lib.log import log_exception
-from lib.packet.cert_mgmt import CertMgmtRequest
-from lib.packet.drkey import DRKeyRequestKey, DRKeyReplyKey, DRKeyAcknowledgeKeys, DRKeySendKeys, DRKeyConstants, \
+from lib.opt.ext.drkey import DRKeyRequestKey, DRKeyReplyKey, DRKeyAcknowledgeKeys, DRKeySendKeys, DRKeyConstants, \
     DRKeyReplyCertChain, DRKeyRequestCertChain
-from lib.packet.host_addr import haddr_parse, HostAddrIPv4
+from lib.packet.host_addr import haddr_parse
 from lib.packet.path import EmptyPath, PathCombinator, PathBase
 from lib.packet.path_mgmt import PathSegmentInfo
 from lib.packet.scion_addr import ISD_AS, SCIONAddr
-from lib.packet.scion_udp import SCIONUDPHeader
 from lib.path_db import DBResult, PathSegmentDB
 from lib.requests import RequestHandler
 from lib.packet.scion import PacketType as PT, SCIONL4Packet

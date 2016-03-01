@@ -22,7 +22,7 @@ import struct
 # SCION
 from lib.defines import L4_PROTOS
 from lib.errors import SCIONParseError
-from lib.packet.ext.opt import OPTExt
+from lib.opt.ext.opt import OPTExt
 from lib.packet.ext.path_probe import PathProbeExt
 from lib.packet.ext.path_transport import PathTransportExt
 from lib.packet.ext.traceroute import TracerouteExt

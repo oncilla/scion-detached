@@ -18,17 +18,11 @@
 Contains all the packet formats used for path management.
 """
 # Stdlib
-import logging
 import struct
-from collections import defaultdict
-
-# Crypto
-from nacl.public import PublicKey
 
 # SCION
 from lib.crypto.certificate import CertificateChain
-from lib.packet.cert_mgmt import CertChainReply
-from lib.types import DRKeyType as DRKT, PayloadClass
+from lib.types import DRKeyType as DRKT
 from lib.errors import SCIONParseError
 from lib.packet.packet_base import DRKeyPayloadBase
 from lib.util import Raw

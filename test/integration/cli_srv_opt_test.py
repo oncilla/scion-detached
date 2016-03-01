@@ -19,32 +19,22 @@
 # Stdlib
 import argparse
 import logging
+import sys
 import threading
 import time
 
-import sys
 from nacl.utils import random as rand_bytes
-
-
-
 # SCION
-from endhost.opt_store import OPTStore, OPTCreatePacketParams, create_scion_udp_packet, is_hash_valid, get_opt_ext_hdr, \
+from lib.opt.util import OPTStore, OPTCreatePacketParams, create_scion_udp_packet, is_hash_valid, get_opt_ext_hdr, \
     set_answer_packet
 from endhost.sciond import SCIONDaemon
 from lib.defines import GEN_PATH, SCION_UDP_EH_DATA_PORT
 from lib.log import init_logging
 from lib.main import main_wrapper
-from lib.packet.ext.traceroute import TracerouteExt
-from lib.packet.ext.path_transport import (
-    PathTransportExt,
-    PathTransOFPath,
-    PathTransType,
-)
 from lib.packet.host_addr import haddr_parse_interface
 from lib.packet.packet_base import PayloadRaw
-from lib.packet.scion import SCIONL4Packet, build_base_hdrs
+from lib.packet.scion import SCIONL4Packet
 from lib.packet.scion_addr import ISD_AS, SCIONAddr
-from lib.packet.scion_udp import SCIONUDPHeader
 from lib.socket import UDPSocket
 from lib.thread import thread_safety_net
 from lib.util import handle_signals

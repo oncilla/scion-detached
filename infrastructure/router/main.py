@@ -54,7 +54,7 @@ from lib.errors import (
     SCIONServiceLookupError,
 )
 from lib.log import log_exception
-from lib.packet.ext.opt import OPTExt
+from lib.opt.ext.opt import OPTExt
 from lib.packet.scion_addr import SCIONAddr
 from lib.sibra.ext.ext import SibraExtBase
 from lib.packet.ext.traceroute import TracerouteExt

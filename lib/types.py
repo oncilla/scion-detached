@@ -136,6 +136,7 @@ class DRKeyType(TypeBase):
     REQUEST_CERT_CHAIN = 4
     REPLY_CERT_CHAIN = 5
 
+
 class SIBRAPayloadType(TypeBase):
     EMPTY = 0
 

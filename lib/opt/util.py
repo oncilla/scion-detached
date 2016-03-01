@@ -17,8 +17,8 @@
 """
 import logging
 
-from lib.packet.ext.opt import OPTExt
-from lib.packet.packet_base import PayloadRaw, PayloadBase
+from lib.opt.ext.opt import OPTExt
+from lib.packet.packet_base import PayloadBase
 from lib.packet.scion import SCIONL4Packet, build_base_hdrs
 from lib.packet.scion_addr import SCIONAddr
 from lib.packet.scion_udp import SCIONUDPHeader
