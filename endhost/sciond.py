@@ -149,14 +149,20 @@ class SCIONDaemon(SCIONElement):
         self._secret_value = random_bytes(16)
         self._session_drkeys_map = dict()  # {session_id: [path_length, {isd_ad: (hop, session_key)}]}
         self._drkeys_remote = dict()  # {session_id: DRkeys}
-        self._drkeys_local = dict()  # {session_id: (key_local, [keys_intermediate], key_remote, remote_received, cert)}
+        self._drkeys_local = dict()  # {session_id: (key_local, [keys_intermediate], key_remote, remote_received)}
+        self._drkey_cert_chains = dict()  # {hostaddr: CertificateChain}
 
-        self._drkey_requests = RequestHandler.start(
-            "SCIONDaemon DRKey Requests", self._check_drkeys, self._fetch_drkeys,
-            self._reply_drkeys, ttl=self.TIMEOUT
+        self._drkey_key_requests = RequestHandler.start(
+            "SCIONDaemon DRKey Requests", self._check_drkey_key, self._fetch_drkey_key,
+            self._reply_drkey_key, ttl=self.TIMEOUT
         )
 
-        self._drkey_sends = RequestHandler.start(
+        self._drkey_cert_chain_requests = RequestHandler.start(
+            "SCIONDaemon DRKey Requests", self._check_drkey_cc, self._fetch_drkey_cc,
+            self._reply_drkey_cc, ttl=self.TIMEOUT
+        )
+
+        self._drkey_send_requests = RequestHandler.start(
             "SCIONDaemon DRKey Requests", self._check_drkey_send, self._fetch_drkey_send,
             self._reply_drkey_send, ttl=self.TIMEOUT
         )
@@ -503,7 +509,7 @@ class SCIONDaemon(SCIONElement):
                 missing.append((src_core_as, dst_core_as))
         return core_segs, missing
 
-    def _check_drkeys(self, session_id):
+    def _check_drkey_key(self, session_id):
         """
         Called by RequestHandler to check if all keys on the path of a given session are available.
 
@@ -520,7 +526,7 @@ class SCIONDaemon(SCIONElement):
         logging.debug("_check_drkeys: length: %d supposed: %d", length, path_length)
         return path_length == length
 
-    def _fetch_drkeys(self, session_id, request):
+    def _fetch_drkey_key(self, session_id, request):
         """
         Called by RequestHandler to fetch the drkeys from the ASes on the path for a given session.
 
@@ -535,11 +541,11 @@ class SCIONDaemon(SCIONElement):
         for dict_tuple in self._session_drkeys_map[session_id][1].items():
             if not dict_tuple[1][1]:  # session key has not yet been received
                 isd_as = ISD_AS(raw=dict_tuple[0])
-                req = DRKeyRequestKey.from_values(dict_tuple[1][0], session_id, self.get_certificate_chain())
+                req = DRKeyRequestKey.from_values(dict_tuple[1][0], session_id, self.create_fake_cert_chain())
                 pkt = self._build_packet(PT.CERT_MGMT, path=path, dst_ia=isd_as, payload=req)
                 self._send_to_next_hop(pkt)
 
-    def _reply_drkeys(self, session_id, request):
+    def _reply_drkey_key(self, session_id, request):
         """
         Called by RequestHandler to signal that the request has been fulfilled.
         Stores a tuple in the _drkeys_local map.
@@ -553,7 +559,7 @@ class SCIONDaemon(SCIONElement):
         if not drkeys:
             return
         remote_key = self._get_remote_drkey(session_id)
-        self._drkeys_local[session_id] = (None, drkeys, remote_key, False, None)
+        self._drkeys_local[session_id] = (None, drkeys, remote_key, False)
         request[1].set()
 
     def _start_drkey_exchange(self, dst, path, session_id):
@@ -590,7 +596,56 @@ class SCIONDaemon(SCIONElement):
                 self._session_drkeys_map[session_id][1][isd_as.pack()] = (hop, None)
 
         e = threading.Event()
-        self._drkey_requests.put((session_id, (path, e)))
+        self._drkey_key_requests.put((session_id, (path, e)))
+        return e
+
+    def _check_drkey_cc(self, host):
+        """
+        Called by RequestHandler to check if drkeys have been successfully shared.
+
+        :param host: host address
+        :type host: str
+        """
+        return host in self._drkey_cert_chains
+
+    def _fetch_drkey_cc(self, host, req):
+        """
+        Called by RequestHandler to share the drkeys.
+
+        :param host: host address
+        :type host: str
+        :param req: (dst address, path, keys, threading event) tuple
+        :type req: (SCIONAddr, PathBase, Event)
+        """
+        dst, path, _ = req
+        snd = DRKeyRequestCertChain.from_values()
+        pkt = self._build_packet(dst.host, path=path, dst_ia=dst.isd_as, payload=snd, dst_port=SCION_UDP_PORT)
+        self.send(pkt, host)
+
+    def _reply_drkey_cc(self, _, req):
+        """
+        Called by RequestHandler to signal that the keys have been successfully shared.
+
+        :param req: (dst address, path, keys, threading event) tuple
+        :type req: (SCIONAddr, PathBase, Event)
+        """
+        req[2].set()
+
+    def _start_cert_chain_requests(self, dst, path):
+        """
+        Start sending the drkeys to the destination.
+
+        :param dst: destination address
+        :type dst: SCIONAddr
+        :param path: path to destination.
+        :type path: PathBase
+        :param session_id: session id of the flow (16 B)
+        :type session_id: bytes
+        :return: Event
+        """
+
+        e = threading.Event()
+        self._drkey_cert_chain_requests.put((str(dst.host), (dst, path, e)))
         return e
 
     def _check_drkey_send(self, session_id):
@@ -600,6 +655,7 @@ class SCIONDaemon(SCIONElement):
         :param session_id: session id (16 B)
         :type session_id: bytes
         """
+        logging.debug("checking send: %s", str(session_id in self._drkeys_local and self._drkeys_local[session_id][3]))
         return session_id in self._drkeys_local and self._drkeys_local[session_id][3]
 
     def _fetch_drkey_send(self, session_id, req):
@@ -612,19 +668,16 @@ class SCIONDaemon(SCIONElement):
         :type req: (SCIONAddr, PathBase, DRKeys, Event)
         """
         dst, path, keys, _ = req
-
-        cert_local = self.get_certificate_chain()
-        cert_remote = self._drkeys_local[session_id][4]
-        if not cert_remote:
-            # dirty hack
-            snd = DRKeyRequestCertChain.from_values(session_id)
-            pkt = self._build_packet(dst.host, path=path, dst_ia=dst.isd_as, payload=snd, dst_port=SCION_UDP_PORT)
-            self.send(pkt, dst.host)
+        cert_local = self.create_fake_cert_chain()
+        try:
+            cert_remote = self._drkey_cert_chains[str(dst.host)].certs[0]
+        except KeyError:
+            logging.info("No certificate chain for host: %s", dst.host)
             return
 
-        cert_remote = cert_remote.certs[0]
-
         assert isinstance(cert_remote, Certificate)
+
+        logging.debug("sending drkeys")
 
         key_list = keys.intermediate_keys + [keys.dst_key]
         cipher = encrypt_session_key(self._private_key, cert_remote.subject_enc_key, b"".join(key_list))
@@ -659,7 +712,7 @@ class SCIONDaemon(SCIONElement):
         e = threading.Event()
         assert keys.intermediate_keys is not None
         assert keys.dst_key
-        self._drkey_sends.put((session_id, (dst, path, keys, e)))
+        self._drkey_send_requests.put((session_id, (dst, path, keys, e)))
         return e
 
     def _get_remote_drkey(self, session_id):
@@ -693,7 +746,7 @@ class SCIONDaemon(SCIONElement):
         assert (path.interfaces or isinstance(path, EmptyPath))
 
         if isinstance(path, EmptyPath):
-            self._drkeys_local[session_id] = (None, [], self._get_remote_drkey(session_id), False, None)
+            self._drkeys_local[session_id] = (None, [], self._get_remote_drkey(session_id), False)
             return
 
         e = self._start_drkey_exchange(dst, path, session_id)
@@ -736,6 +789,26 @@ class SCIONDaemon(SCIONElement):
             except KeyError:
                 return None
 
+    def get_certificate_chain(self, dst, path, non_blocking=False):
+        """
+
+        :param dst:
+        :param path:
+        :param non_blocking:
+        :return:
+        """
+
+        e = self._start_cert_chain_requests(dst, path)
+
+        if non_blocking:
+            return
+
+        deadline = SCIONTime.get_time() + self.TIMEOUT
+        while not self._wait_for_events([e], deadline):
+            logging.error("request cert chain timed out for %s: retry", dst.host)
+            e = self._start_cert_chain_requests(dst, path)
+            deadline = SCIONTime.get_time() + self.TIMEOUT
+
     def send_drkeys(self, dst, path, session_id, non_blocking=False):
         """
         Send the drkeys associated with the session to the destination using the path.
@@ -756,7 +829,11 @@ class SCIONDaemon(SCIONElement):
             assert isinstance(drkeys, DRKeys)
             if drkeys.intermediate_keys is None:
                 return False
+            if not dst.host in self._drkey_cert_chains:
+                self._start_cert_chain_requests(dst, path)
+                return False
             self._start_sending_drkeys(dst, path, session_id, drkeys)
+            return True
 
         # handle blocking case
         drkeys = self.get_drkeys(session_id)
@@ -764,6 +841,8 @@ class SCIONDaemon(SCIONElement):
             logging.info("keys not initialized, waiting... ")
             self.init_drkeys(dst, path, session_id)
             drkeys = self.get_drkeys(session_id)
+
+        self.get_certificate_chain(dst, path)
 
         e = self._start_sending_drkeys(dst, path, session_id, drkeys)
         deadline = SCIONTime.get_time() + self.TIMEOUT
@@ -821,7 +900,7 @@ class SCIONDaemon(SCIONElement):
         isd_as_raw = isd_as.pack()
         hop, _ = self._session_drkeys_map[payload.session_id][1][isd_as_raw]
         self._session_drkeys_map[payload.session_id][1][isd_as_raw] = (hop, session_key)
-        self._drkey_requests.put((payload.session_id, None))
+        self._drkey_key_requests.put((payload.session_id, None))
 
         logging.debug("Handle DRKey reply:\n Session Key[Hop:%d] = %s", payload.hop, session_key)
 
@@ -866,7 +945,7 @@ class SCIONDaemon(SCIONElement):
         pkt.reverse()
         assert drkeys.src_key
         pkt.set_payload(DRKeyAcknowledgeKeys.from_values(payload.session_id, cipher, signature,
-                                                         self.get_certificate_chain()))
+                                                         self.create_fake_cert_chain()))
         self.send(pkt, pkt.addrs.dst.host, pkt.l4_hdr.dst_port)
 
     def handle_drkey_ack(self, pkt):
@@ -902,8 +981,8 @@ class SCIONDaemon(SCIONElement):
         if not tup:
             logging.info("Received drkey ack for inexistent session_id: %s from %s", payload.session_id, pkt.addrs.src)
             return
-        self._drkeys_local[payload.session_id] = (session_key, tup[1], tup[2], True, None)
-        self._drkey_sends.put((payload.session_id, None))
+        self._drkeys_local[payload.session_id] = (session_key, tup[1], tup[2], True)
+        self._drkey_send_requests.put((payload.session_id, None))
         self._session_drkeys_map.pop(payload.session_id, None)
 
         logging.debug("Handle DRKey ack %s", pkt.get_payload())
@@ -917,9 +996,9 @@ class SCIONDaemon(SCIONElement):
         :type pkt: SCIONL4Packet
         :return:
         """
-        payload = pkt.get_payload()
+        logging.debug("received drkey cc request: %s", pkt)
         pkt.reverse()
-        pkt.set_payload(DRKeyReplyCertChain.from_values(payload.session_id, self.get_certificate_chain()))
+        pkt.set_payload(DRKeyReplyCertChain.from_values(self.create_fake_cert_chain()))
         self.send(pkt, pkt.addrs.dst.host, pkt.l4_hdr.dst_port)
 
     def handle_drkey_cc_rep(self, pkt):
@@ -932,20 +1011,18 @@ class SCIONDaemon(SCIONElement):
         :return:
         """
 
+        logging.debug("received drkey cc reply: %s", pkt)
         payload = pkt.get_payload()
         assert isinstance(payload, DRKeyReplyCertChain)
 
         isd_as = pkt.addrs.src.isd_as
         trc = self.trust_store.get_trc(isd_as[0])
-        if not payload.certificate_chain.verify(str(isd_as), trc, trc.version):
-            logging.info("Invalid certificate chain from %s", isd_as)
-        tup = self._drkeys_local[payload.session_id]
-        if not tup:
-            logging.info("Received drkey cert chain reply for inexistent session_id: %s from %s", payload.session_id, pkt.addrs.src)
+        if not payload.certificate_chain.verify(str(pkt.addrs.src.host), trc, trc.version):
+            logging.info("Invalid certificate chain from %s", pkt.addrs.src)
             return
-        self._drkeys_local[payload.session_id] = (tup[0], tup[1], tup[2], tup[3], payload.certificate_chain)
-        self._drkey_sends.put((payload.session_id, None))
 
+        self._drkey_cert_chains[str(pkt.addrs.src.host)] = payload.certificate_chain
+        self._drkey_cert_chain_requests.put((str(pkt.addrs.src.host), None))
 
     def _send_to_next_hop(self, pkt):
         """
@@ -961,7 +1038,7 @@ class SCIONDaemon(SCIONElement):
         logging.info("Sending packet via (%s:%s):\n%s", next_hop, port, pkt)
         self.send(pkt, next_hop, port)
 
-    def get_certificate_chain(self):
+    def create_fake_cert_chain(self):
         # TODO replace with original certificate when ready !!!!
 
         cc = self.trust_store.get_cert(self.addr.isd_as)
