@@ -27,7 +27,7 @@ from nacl.public import PrivateKey
 from nacl.signing import SigningKey
 from nacl.utils import random as random_bytes
 
-from lib.opt.util import DRKeys
+from lib.opt.util import DRKeys, get_local_session_key, get_intermediate_session_keys
 from infrastructure.scion_elem import SCIONElement
 from lib.crypto.asymcrypto import decrypt_session_key, sign, verify, encrypt_session_key, generate_enc_pub_key
 from lib.crypto.certificate import TRC, CertificateChain, Certificate
@@ -58,6 +58,15 @@ from lib.util import SCIONTime, Raw, read_file, get_sig_key_file_path
 
 SCIOND_API_HOST = "127.255.255.254"
 SCIOND_API_PORT = 3333
+
+
+class API_REQUEST_CODES:
+    PATH_REQUEST = 0
+    ADDRESS_REQUEST = 1
+    OPT_PATH_REQUEST = 2
+    OPT_GET_VERIFY_KEYS = 3
+    OPT_SHARE_KEYS = 4
+    OPT_REMOVE_SESSION = 5
 
 
 def key_list_from_bytes(raw):
@@ -148,6 +157,7 @@ class SCIONDaemon(SCIONElement):
         self._drkeys_remote = dict()  # {session_id: DRkeys}
         self._drkeys_local = dict()  # {session_id: (key_local, [keys_intermediate], key_remote, remote_received)}
         self._drkey_cert_chains = dict()  # {hostaddr: CertificateChain}
+        self._active_opt_paths = dict()  # {session_id: (PathBase, SCIONAddr)}
 
         self._drkey_key_requests = RequestHandler.start(
             "SCIONDaemon DRKey Requests", self._check_drkey_key, self._fetch_drkey_key,
@@ -243,14 +253,35 @@ class SCIONDaemon(SCIONElement):
         """
         Handle local API's requests.
         """
-        if packet[0] == 0:  # path request
+        if packet[0] == API_REQUEST_CODES.PATH_REQUEST:  # path request
             logging.info('API: path request from %s.', sender)
             threading.Thread(
                 target=thread_safety_net,
                 args=(self._api_handle_path_request, packet, sender),
                 name="SCIONDaemon", daemon=True).start()
-        elif packet[0] == 1:  # address request
+        elif packet[0] == API_REQUEST_CODES.ADDRESS_REQUEST:  # address request
             self._api_sock.send(self.addr.pack(), sender)
+        elif packet[0] == API_REQUEST_CODES.OPT_PATH_REQUEST:
+            logging.info('API: opt path request from %s.', sender)
+            threading.Thread(
+                target=thread_safety_net,
+                args=(self._api_handle_opt_path_request, packet, sender),
+                name="SCIONDaemon", daemon=True).start()
+        elif packet[0] == API_REQUEST_CODES.OPT_GET_VERIFY_KEYS:
+            logging.info('API: opt key request from %s.', sender)
+            threading.Thread(
+                target=thread_safety_net,
+                args=(self._api_handle_opt_get_verify_keys, packet, sender),
+                name="SCIONDaemon", daemon=True).start()
+        elif packet[0] == API_REQUEST_CODES.OPT_SHARE_KEYS:
+            logging.info('API: opt share request from %s.', sender)
+            threading.Thread(
+                target=thread_safety_net,
+                args=(self._api_handle_opt_share_keys, packet, sender),
+                name="SCIONDaemon", daemon=True).start()
+        elif packet[0] == API_REQUEST_CODES.OPT_REMOVE_SESSION:
+            logging.info('API: opt remove request from %s.', sender)
+            self._api_handle_opt_remove_session(packet, sender)
         else:
             logging.warning("API: type %d not supported.", packet[0])
 
@@ -286,6 +317,112 @@ class SCIONDaemon(SCIONElement):
                 reply.append(isd_as.pack())
                 reply.append(struct.pack("!H", link))
         self._api_sock.send(b"".join(reply), sender)
+
+    def _api_handle_opt_path_request(self, packet, sender):
+        """
+        Request:
+          | \x02 (1B) | Session ID (16B) | SCIONAddr (rest) |
+        Reply:
+          |p_len(1B)|p((p_len*8)B)|fh_IP(4B)|fh_port(2B)|mtu(2B)|
+          |p_if_count(1B)|p_if_1(5B)|...|p1_if_n(5B)| drkey_dst (16B)
+         or b"" when no path found. Only IPv4 supported currently.
+        :param packet:
+        :param sender:
+        :return:
+        """
+        offset = 1
+        session_id = packet[offset: offset + DRKeyConstants.SESSION_ID_BYTE_LENGTH]
+        offset += DRKeyConstants.SESSION_ID_BYTE_LENGTH
+        logging.debug("%s\nType: %s", packet[offset:], type(packet[offset:]))
+        dst = SCIONAddr(("IPV4", packet[offset:]))
+
+        paths = self.get_paths(dst.isd_as)
+        path = self._choose_opt_path(paths)
+
+        if not path:
+            self._api_sock.send(b"", sender)
+            return
+
+        reply = []
+        # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+        #  Code from '_api_handle_path_request'. Please sync
+        raw_path = path.pack()
+        # assumed IPv4 addr
+        fwd_if = path.get_fwd_if()
+        # Set dummy host addr if path is EmptyPath.
+        # TODO(PSz): remove dummy "0.0.0.0" address when API is saner
+        haddr = self.ifid2addr.get(fwd_if, haddr_parse("IPV4", "0.0.0.0"))
+        path_len = len(raw_path) // 8
+        reply.append(struct.pack("!B", path_len) + raw_path +
+                     haddr.pack() + struct.pack("!H", SCION_UDP_PORT) +
+                     struct.pack("!H", path.mtu) +
+                     struct.pack("!B", len(path.interfaces)))
+        for interface in path.interfaces:
+            isd_as, link = interface
+            reply.append(isd_as.pack())
+            reply.append(struct.pack("!H", link))
+        # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+        self.init_drkeys(dst, path, session_id, True)
+        reply.append(self._get_remote_drkey(session_id))
+        self._active_opt_paths[session_id] = path, dst
+
+        self._api_sock.send(b"".join(reply), sender)
+
+    def _api_handle_opt_get_verify_keys(self, packet, sender):
+        """
+        Request:
+          | \x03 (1B) | Session ID (16B) |
+        Reply:
+          | drkey_local (16B) | drkey_1 (16B) | ... | drkey_N (16B) |
+
+         The DRKeys are in order of the packet verification chain of a received packet.
+        :param packet:
+        :param sender:
+        :return:
+        """
+
+        session_id = packet[1:DRKeyConstants.SESSION_ID_BYTE_LENGTH + 1]
+
+        drkeys = self.get_drkeys(session_id)
+
+        if drkeys.intermediate_keys is None:
+            self._api_sock.send(b"", sender)
+            return
+
+        reply = [get_local_session_key(drkeys)] + get_intermediate_session_keys(drkeys)
+        self._api_sock.send(b"".join(reply), sender)
+
+    def _api_handle_opt_share_keys(self, packet, sender):
+        """
+        Request:
+          | \x04 (1B) | Session ID (16B)
+
+        Reply:
+         b"".
+        :param packet:
+        :param sender:
+        :return:
+        """
+        session_id = packet[1:DRKeyConstants.SESSION_ID_BYTE_LENGTH + 1]
+        path, dst = self._active_opt_paths[session_id]
+        self.send_drkeys(dst, path, session_id)
+        self._api_sock.send(b"", sender)
+
+    def _api_handle_opt_remove_session(self, packet, sender):
+        """
+        Request:
+          | \x05 (1B) | Session ID (16B) |
+        Reply:
+           b"" .
+        :param packet:
+        :param sender:
+        :return:
+        """
+        session_id = packet[1:DRKeyConstants.SESSION_ID_BYTE_LENGTH + 1]
+        self.remove_drkeys(session_id)
+        self._active_opt_paths.pop(session_id, None)
+        self._api_sock.send(b"", sender)
 
     def handle_revocation(self, pkt):
         """
@@ -576,6 +713,9 @@ class SCIONDaemon(SCIONElement):
         for isd_as in [inf[0] for inf in path.interfaces]:
             logging.debug("Interface on path: %s", isd_as)
 
+        if self.get_drkeys(session_id).src_key:
+            return None
+
         if session_id not in self._session_drkeys_map:
             ases = []
             # only care about one hop in the AS
@@ -748,7 +888,7 @@ class SCIONDaemon(SCIONElement):
 
         e = self._start_drkey_exchange(dst, path, session_id)
 
-        if non_blocking:
+        if non_blocking or e is None:
             return
 
         deadline = SCIONTime.get_time() + self.TIMEOUT
@@ -849,6 +989,17 @@ class SCIONDaemon(SCIONElement):
             deadline = SCIONTime.get_time() + self.TIMEOUT
 
         return True
+
+    def remove_drkeys(self, session_id):
+        """
+
+        :param session_id:
+        :return:
+        """
+        self._session_drkeys_map.pop(session_id, None)
+        self._drkeys_remote.pop(session_id, None)
+        self._drkeys_local.pop(session_id, None)
+
 
     def handle_drkey_reply(self, pkt):
         """
@@ -1061,6 +1212,13 @@ class SCIONDaemon(SCIONElement):
         cc.certs.insert(0, cert)
 
         return cc
+
+    def _choose_opt_path(self, paths):
+        # TODO replace by more sophisticated algorithm
+        if paths:
+            return paths[0]
+        else:
+            return None
 
 
 class SessionNotAvailableError(Exception):

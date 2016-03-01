@@ -36,7 +36,6 @@ class OPTCreatePacketParams(object):
     path = None  # PathBase
 
 
-
 def get_opt_ext_hdr(pkt):
     """
 
@@ -49,6 +48,7 @@ def get_opt_ext_hdr(pkt):
             assert isinstance(ext_hdr, OPTExt)
             return ext_hdr
     return None
+
 
 def create_scion_udp_packet(params):
     """
@@ -96,7 +96,7 @@ def get_local_session_key(drkeys):
         return drkeys.src_key
 
 
-def get_intermediate_keys(drkeys):
+def get_intermediate_session_keys(drkeys):
     """
 
     :param drkeys:
@@ -178,6 +178,30 @@ class OPTStore(object):
         return self._tuple_map.pop(session_id, None)
 
     @staticmethod
+    def _validate_tuple_raw(tup, drkeys):
+        """
+
+        :param tup:
+        :type tup: (bytes, bytes)
+        :param drkeys:
+        :type drkeys: bytes
+        :return:
+        """
+
+        logging.critical("################# keys: %s ", drkeys)
+        pvf = OPTExt.compute_initial_pvf(drkeys[0], tup[0])
+        logging.critical("Original pvf %s", pvf)
+
+        # last key is the dst key
+        for key in drkeys[1:]:
+            assert isinstance(key, bytes)
+            assert len(key) == 16
+            pvf = OPTExt.compute_intermediate_pvf(key, pvf)
+            logging.critical("\n\tpvf: %s\nor\tpvf: %s\nkey: %s", pvf, tup[1], key)
+
+        return pvf == tup[1]
+
+    @staticmethod
     def _validate_tuple(tup, drkeys):
         """
 
@@ -189,15 +213,21 @@ class OPTStore(object):
         """
 
         pvf = OPTExt.compute_initial_pvf(get_local_session_key(drkeys), tup[0])
-        logging.critical("Original pvf %s", pvf)
+     #   logging.critical("Original pvf %s", pvf)
 
         # last key is the dst key
-        for key in get_intermediate_keys(drkeys):
+        for key in get_intermediate_session_keys(drkeys):
             assert isinstance(key, bytes) and len(key) == 16
             pvf = OPTExt.compute_intermediate_pvf(key, pvf)
-            logging.critical("\n\tpvf: %s\nor\tpvf: %s\nkey: %s", pvf, tup[1], key)
+      #      logging.critical("\n\tpvf: %s\nor\tpvf: %s\nkey: %s", pvf, tup[1], key)
 
         return pvf == tup[1]
+
+    def validate_session_raw(self, session_id, drkeys):
+        for tup in self._tuple_map[session_id]:
+            if not self._validate_tuple_raw(tup, drkeys):
+                return False
+        return True
 
     def validate_session(self, session_id, drkeys):
         """

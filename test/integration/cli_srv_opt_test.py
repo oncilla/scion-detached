@@ -23,23 +23,152 @@ import sys
 import threading
 import time
 
+import struct
 from nacl.utils import random as rand_bytes
 # SCION
+from lib.opt.ext.drkey import DRKeyConstants
 from lib.opt.util import OPTStore, OPTCreatePacketParams, create_scion_udp_packet, is_hash_valid, get_opt_ext_hdr, \
     set_answer_packet
-from endhost.sciond import SCIONDaemon
+from endhost.sciond import SCIONDaemon, SCIOND_API_HOST, SCIOND_API_PORT, API_REQUEST_CODES
 from lib.defines import GEN_PATH, SCION_UDP_EH_DATA_PORT
 from lib.log import init_logging
 from lib.main import main_wrapper
-from lib.packet.host_addr import haddr_parse_interface
+from lib.packet.host_addr import haddr_parse_interface, haddr_parse, haddr_get_type
+from lib.packet.opaque_field import InfoOpaqueField
 from lib.packet.packet_base import PayloadRaw
+from lib.packet.path import EmptyPath, CorePath, CrossOverPath, PeerPath
 from lib.packet.scion import SCIONL4Packet
 from lib.packet.scion_addr import ISD_AS, SCIONAddr
 from lib.socket import UDPSocket
-from lib.thread import thread_safety_net
-from lib.util import handle_signals
+from lib.thread import thread_safety_net, kill_self
+from lib.types import AddrType, OpaqueFieldType as OFT
+from lib.util import handle_signals, Raw
 
 TOUT = 10  # How long wait for response.
+
+
+def send_request_to_api(req, payload):
+    sock = UDPSocket(bind=("127.0.0.1", 0), addr_type=AddrType.IPV4)
+    sock.send(b''.join([struct.pack("!B", req), payload]), (SCIOND_API_HOST, SCIOND_API_PORT))
+    data = sock.recv()[0]
+    sock.close()
+    return data
+
+
+def get_paths_via_api(addr, session_id):
+    """
+    Test local API.
+    """
+    sock = UDPSocket(bind=("127.0.0.1", 0), addr_type=AddrType.IPV4)
+    msg = b'\x02' + session_id + addr.pack()
+
+    for _ in range(5):
+        logging.info("Sending path request to local API.")
+        sock.send(msg, (SCIOND_API_HOST, SCIOND_API_PORT))
+        data = Raw(sock.recv()[0], "Path response")
+        if data:
+            break
+        logging.warning("Empty response from local api.")
+    else:
+        logging.critical("Unable to get path from local api.")
+        kill_self()
+
+    path_len = data.pop(1) * 8
+    if not path_len:
+        return [(EmptyPath(), haddr_parse("IPV4", "0.0.0.0"))], [[]]
+    info = InfoOpaqueField(data.get(InfoOpaqueField.LEN))
+    if info.info == OFT.CORE:
+        path = CorePath(data.pop(path_len))
+    elif info.info == OFT.SHORTCUT:
+        path = CrossOverPath(data.pop(path_len))
+    elif info.info in [OFT.INTRA_ISD_PEER, OFT.INTER_ISD_PEER]:
+        path = PeerPath(data.pop(path_len))
+    else:
+        logging.critical("Can not parse path: Unknown type %x", info.info)
+        kill_self()
+    haddr_type = haddr_get_type("IPV4")
+    hop = haddr_type(data.get(haddr_type.LEN))
+    data.pop(len(hop))
+    data.pop(2)  # port number, unused here
+    data.pop(2)  # MTU, unused here
+    ifcount = data.pop(1)
+    ifs = []
+    if ifcount:
+        for i in range(ifcount):
+            isd_as = ISD_AS(data.pop(ISD_AS.LEN))
+            ifid = struct.unpack("!H", data.pop(2))[0]
+            ifs.append((isd_as, ifid))
+    drkey_remote = data.pop(DRKeyConstants.SESSION_ID_BYTE_LENGTH)
+    sock.close()
+    return path, hop, ifs, drkey_remote
+
+
+def get_path(dst, session_id):
+    logging.info("Sending PATH request for %s", dst)
+    # Get paths through local API.
+    path, hop, iflist, drkey_remote = get_paths_via_api(dst, session_id)
+    if isinstance(path, EmptyPath):
+        hop = dst.host
+    return path, hop, iflist, drkey_remote
+
+
+def client_using_api(c_addr, s_addr):
+    """
+    Simple client
+    """
+    conf_dir = "%s/ISD%d/AS%d/endhost" % (
+        GEN_PATH, c_addr.isd_as[0], c_addr.isd_as[1])
+    # Start SCIONDaemon
+    sd = SCIONDaemon.start(conf_dir, c_addr.host, run_local_api=True, port=0)
+    opt = OPTStore()
+    logging.info("CLI: Sending PATH request for %s", s_addr.isd_as)
+    # Open a socket for incomming DATA traffic
+    sock = UDPSocket(bind=(str(c_addr.host), 0, "Client"),
+                     addr_type=c_addr.host.TYPE)
+    # Get paths to server through function call
+
+    session_id = rand_bytes(16)
+    # start DRKey exchange
+    path, hop, iflist, drkey_remote = get_paths_via_api(s_addr, session_id)
+
+    params = OPTCreatePacketParams()
+    params.session_id = session_id
+    params.dst = s_addr
+    params.port_dst = SCION_UDP_EH_DATA_PORT
+    params.src = c_addr
+    params.port_src = sock.port
+    params.path = path
+    params.session_key_dst = drkey_remote
+
+    for i in range(10):
+        params.payload = PayloadRaw(("request %d to server" % i).encode("utf-8"))
+
+        spkt = create_scion_udp_packet(params)
+        next_hop, port = sd.get_first_hop(spkt)
+        assert next_hop is not None
+        logging.info("CLI: Sending packet:\n%d\nFirst hop: %s:%s",
+                     i, next_hop, port)
+        sd.send(spkt, next_hop, port)
+
+        raw, _ = sock.recv()
+        logging.info('CLI: Received response:\n%s', SCIONL4Packet(raw))
+        spkt = SCIONL4Packet(raw)
+        opt.insert_packet(spkt)
+
+    send_request_to_api(API_REQUEST_CODES.OPT_SHARE_KEYS, payload=session_id)
+    logging.debug("DRKeys sent")
+
+    data = Raw(send_request_to_api(API_REQUEST_CODES.OPT_GET_VERIFY_KEYS, payload=session_id), "Keys")
+    drkeys = []
+    while len(data) > 0:
+        drkeys.append(data.pop(16))
+
+    assert opt.validate_session_raw(session_id, drkeys)
+
+    logging.debug("OPT Session size: %d", opt.number_of_packets(session_id))
+
+    logging.info("CLI: leaving. (Successful)")
+    sock.close()
 
 
 def client(c_addr, s_addr):
@@ -115,11 +244,11 @@ def server(addr):
     )
 
     for i in range(10):
-        logging.debug("SRV: waiting for packet %d", i)
+       # logging.debug("SRV: waiting for packet %d", i)
         raw, _ = sock.recv()
         # Request received, instantiating SCION packet
         spkt = SCIONL4Packet(raw)
-        logging.info('SRV: received: %s', spkt.get_payload()._raw)
+       # logging.info('SRV: received: %s', spkt.get_payload()._raw)
 
         if not is_hash_valid(spkt):
             logging.error("#########################################SRV: data hash is not valid")
@@ -140,7 +269,7 @@ def server(addr):
             logging.debug("Waiting for drkeys: %s", session_id)
             time.sleep(0.001)
 
-        logging.critical("DRKeys: %s", drkeys)
+      #  logging.critical("DRKeys: %s", drkeys)
 
         if not opt.validate_session(session_id, drkeys):
             logging.error("Invalid pvfs")
@@ -180,7 +309,7 @@ def main():
     cli_addr = SCIONAddr.from_values(cli_ia, haddr_parse_interface(args.client))
     t_client = threading.Thread(
         target=thread_safety_net, args=(
-            client, cli_addr, srv_addr,
+            client_using_api, cli_addr, srv_addr,
         ), name="C2S_extn.client", daemon=True)
     t_client.start()
     t_client.join()
