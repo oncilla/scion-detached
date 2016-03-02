@@ -42,6 +42,9 @@ def main():
     handle_signals()
     test_list()
     test_lookup()
+    test_topology_lookup()
+    test_locations_lookup()
+    test_stay_ISD()
 
 
 def test_list():
@@ -56,22 +59,7 @@ def test_list():
     req = {"version": "0.1",
            "command": "LIST"}
 
-    try:
-        send_request(sock, req)
-
-        # Receive the response (length + response body)
-        logging.debug('Waiting to receive the response length')
-        data_raw, server = sock.recv()
-        data_len = struct.unpack("!I", data_raw[0:4])[0]
-        logging.debug('Length of the response = %d' % data_len)
-
-        # Unpack the response itself
-        logging.debug('Response json')
-        logging.debug('Received "%s"' % data_raw[4:4+data_len])
-
-    finally:
-        logging.debug('Closing socket')
-        sock.close()
+    send_req_and_read_resp(sock, req)
 
 
 def test_lookup():
@@ -89,8 +77,68 @@ def test_lookup():
            "req_type": "CONNECT",
            "res_name": "api.github.com:443"}
 
+    send_req_and_read_resp(sock, req)
+
+
+def test_topology_lookup():
+    """
+    Creates a sample topology request, sends it to the UDP server
+    and reads the response.
+    """
+
+    logging.info('Starting the topology request test')
+    # Create a UDP socket
+    sock = UDPSocket(None, AddrType.IPV4)
+
+    req = {"version": "0.1",
+           "command": "TOPO"}
+
+    send_req_and_read_resp(sock, req)
+
+
+def test_locations_lookup():
+    """
+    Creates a sample default locations request, sends it to the UDP
+    server and reads the response.
+    """
+
+    logging.info('Starting the locations request test')
+    # Create a UDP socket
+    sock = UDPSocket(None, AddrType.IPV4)
+
+    req = {"version": "0.1",
+           "command": "LOCATIONS"}
+
+    send_req_and_read_resp(sock, req)
+
+
+def test_stay_ISD():
+    """
+    Creates a stay ISD request, sends it to the UDP server.
+    """
+
+    logging.info('Starting the stay ISD request test')
+    # Create a UDP socket
+    sock = UDPSocket(None, AddrType.IPV4)
+
+    req = {"version": "0.1",
+           "command": "STAY_ISD",
+           "isd": 1}
+
+    send_req_and_read_resp(sock, req)
+
+
+def send_req_and_read_resp(sock, req):
+    """
+    Helper function to send the request via the socket to the UPD
+    server and receive the response on the same socket.
+    :param sock: UDP socket to use for sending the request
+    :type sock: socket
+    :param req: Request to send to the kbase look-up server
+    :type req: dict
+    """
     try:
-        send_request(sock, req)
+        send(sock, req)
 
         # Receive the response (length + response body)
         logging.debug('Waiting to receive the response length')
@@ -107,7 +155,7 @@ def test_lookup():
         sock.close()
 
 
-def send_request(sock, req):
+def send(sock, req):
     """
     Marshals and sends the request to the UDP server.
     :param sock: UDP socket to use for sending the request

@@ -22,14 +22,17 @@ import json
 import logging
 import struct
 import threading
+import yaml
 
 
 # SCION
 from lib.socket import UDPSocket
 from lib.thread import thread_safety_net
 from lib.types import AddrType
+from topology.generator import DEFAULT_TOPOLOGY_FILE
 
 SERVER_ADDRESS = "127.0.0.1", 7777
+DEFAULT_LOCATIONS_FILE = "topology/Default.locations"
 
 
 class KnowledgeBaseLookupService(object):
@@ -108,10 +111,22 @@ class KnowledgeBaseLookupService(object):
                 req_type = request['req_type']
                 res_name = request['res_name']
             except KeyError as e:
-                logging.error('Key error while parsing request: %s' % e)
+                logging.error('Key error while parsing LOOKUP req: %s' % e)
                 return
             assert(isinstance(req_type, str))
             resp = self.kbase.lookup(req_type, res_name)
+        elif cmd == 'TOPO':
+            resp = self._get_topology()
+        elif cmd == 'LOCATIONS':
+            resp = self._get_locations()
+        elif cmd == 'STAY_ISD':
+            try:
+                isd = request['isd']
+            except KeyError as e:
+                logging.error('Key error while parsing STAY_ISD req: %s' % e)
+                return
+            assert(isinstance(isd, int))
+            resp = self._handle_stay_ISD(isd)
         else:
             logging.error('Unsupported command: %s')
             return
@@ -164,3 +179,45 @@ class KnowledgeBaseLookupService(object):
         except OSError as e:
             logging.error('Error while sending response: %s' % e)
             raise OSError("Can't write to the socket: It is dead.")
+
+    def _get_topology(self):
+        """
+        Reads in the topology file and serves the relevant part of that
+        to the visualization extension.
+        :returns: A list of links extracted from the topology file.
+        :rtype: list
+        """
+        with open(DEFAULT_TOPOLOGY_FILE, 'r') as stream:
+            try:
+                topo_dict = yaml.load(stream)
+                logging.debug('Topology: %s' % topo_dict)
+                return topo_dict['links']
+            except (yaml.YAMLError, KeyError) as e:
+                logging.error('Error while reading the topology YAML: %s' % e)
+                return []
+
+    def _get_locations(self):
+        """
+        Reads in the default locations file and serves the relevant part of that
+        to the visualization extension.
+        :returns: A dictionary of AS Name to Country Code matching.
+        :rtype: dict
+        """
+        with open(DEFAULT_LOCATIONS_FILE, 'r') as stream:
+            try:
+                locations_dict = yaml.load(stream)
+                logging.debug('Locations: %s' % locations_dict)
+                return locations_dict['locations']
+            except (yaml.YAMLError, KeyError) as e:
+                logging.error('Error while reading the locations YAML: %s' % e)
+                return {}
+
+    def _handle_stay_ISD(self, isd):
+        """
+        Lets the kbase know of which ISD should be enforced.
+        :param isd: ISD number
+        :type isd: int
+        :returns: A dictionary indicating the result.
+        :rtype: dict
+        """
+        return self.kbase.set_stay_ISD(isd)

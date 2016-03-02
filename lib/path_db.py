@@ -69,7 +69,7 @@ class PathSegmentDBRecord(object):
 
 class PathSegmentDB(object):
     """Simple database for paths using PyDBLite"""
-    def __init__(self, segment_ttl=None, max_res_no=None):
+    def __init__(self, segment_ttl=None, max_res_no=None):  # pragma: no cover
         """
         :param int segment_ttl:
             The TTL for each record in the database (in s) or None to just use
@@ -78,7 +78,7 @@ class PathSegmentDB(object):
         """
         self._db = Base("", save_to_file=False)
         self._db.create('record', 'id', 'first_isd', 'first_as', 'last_isd',
-                        'last_as', mode='override')
+                        'last_as', 'sibra', mode='override')
         self._db.create_index('id')
         self._db.create_index('last_isd')
         self._db.create_index('last_as')
@@ -112,12 +112,12 @@ class PathSegmentDB(object):
         else:
             record = PathSegmentDBRecord(pcb)
         with self._lock:
-            recs = self._db(id=record.id)
+            recs = self._db(id=record.id, sibra=pcb.is_sibra())
             assert len(recs) <= 1, "PathDB contains > 1 path with the same ID"
             if not recs:
                 self._db.insert(
                     record, record.id, first_ia[0], first_ia[1],
-                    last_ia[0], last_ia[1])
+                    last_ia[0], last_ia[1], pcb.is_sibra())
                 return DBResult.ENTRY_ADDED
             cur_rec = recs[0]['record']
             if pcb.get_expiration_time() < cur_rec.pcb.get_expiration_time():
@@ -152,7 +152,7 @@ class PathSegmentDB(object):
                 deletions += 1
         return deletions
 
-    def __call__(self, full=False, *args, **kwargs):
+    def __call__(self, *args, full=False, **kwargs):
         """
         Selection by field values.
 
@@ -162,9 +162,13 @@ class PathSegmentDB(object):
         :param bool full:
             Return list of results not bounded by self._max_res_no.
         """
-        now = int(SCIONTime.get_time())
-        expired_recs = []
-        valid_recs = []
+        kwargs = self._parse_call_kwargs(kwargs)
+        with self._lock:
+            recs = self._db(*args, **kwargs)
+            valid_recs = self._exp_call_records(recs)
+        return self._sort_call_pcbs(full, valid_recs)
+
+    def _parse_call_kwargs(self, kwargs):  # pragma: no cover
         first_ia = kwargs.pop("first_ia", None)
         if first_ia:
             kwargs["first_isd"] = first_ia[0]
@@ -173,23 +177,33 @@ class PathSegmentDB(object):
         if last_ia:
             kwargs["last_isd"] = last_ia[0]
             kwargs["last_as"] = last_ia[1]
-        with self._lock:
-            recs = self._db(*args, **kwargs)
-            # Remove expired path from the cache.
-            for r in recs:
-                if r['record'].exp_time < now:
-                    expired_recs.append(r)
-                    logging.debug("Path-Segment (%(first_isd)d, %(first_as)d) "
-                                  "-> (%(last_isd)d, %(last_as)d) expired.", r)
-                else:
-                    valid_recs.append(r)
-            self._db.delete(expired_recs)
-        pcbs = sorted([r['record'] for r in valid_recs],
-                      key=lambda x: x.fidelity)
-        if self._max_res_no and not full:
-            pcbs = pcbs[:self._max_res_no]
-        return [p.pcb for p in pcbs]
+        if "sibra" not in kwargs:
+            kwargs["sibra"] = False
+        return kwargs
 
-    def __len__(self):
+    def _exp_call_records(self, recs):
+        """Remove expired segments from the db."""
+        now = int(SCIONTime.get_time())
+        ret = []
+        expired = []
+        for r in recs:
+            if r['record'].exp_time < now:
+                expired.append(r)
+                logging.debug("Path-Segment expired: %s",
+                              r['record'].pcb.short_desc())
+                continue
+            ret.append(r)
+        if expired:
+            self._db.delete(expired)
+        return ret
+
+    def _sort_call_pcbs(self, full, valid_recs):  # pragma: no cover
+        seg_recs = sorted([r['record'] for r in valid_recs],
+                          key=lambda x: x.fidelity)
+        if self._max_res_no and not full:
+            seg_recs = seg_recs[:self._max_res_no]
+        return [r.pcb for r in seg_recs]
+
+    def __len__(self):  # pragma: no cover
         with self._lock:
             return len(self._db)

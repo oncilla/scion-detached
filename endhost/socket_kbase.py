@@ -44,6 +44,7 @@ class SocketKnowledgeBase(object):
         """
         self.active_sockets = set()
         self.kbase = {}  # HTTP Req (method, path) to stats (ScionStats)
+        self.stay_ISD = 0  # ISD to enforce. 0 means do not enforce any.
         self.lock = threading.Lock()
         self.gatherer = threading.Thread(
             target=thread_safety_net,
@@ -107,6 +108,28 @@ class SocketKnowledgeBase(object):
         """
         return list(self.kbase.keys())
 
+    def set_stay_ISD(self, isd):
+        """
+        Setter function for stay_ISD class member.
+        :param isd: ISD number (positive integer)
+        :type isd: int
+        """
+        if isd < 0:
+            logging.error("Invalid value to set_stay_ISD. Ignoring: %d", isd)
+            return {'STATUS': 'INVALID_ISD'}
+        else:
+            self.stay_ISD = isd
+            logging.info("Stay ISD set: %d", self.stay_ISD)
+            return {'STATUS': 'OK'}
+
+    def get_stay_ISD(self):
+        """
+        Getter function for stay_ISD class member.
+        :returns ISD to enforce.
+        :type isd: int
+        """
+        return self.stay_ISD
+
     def update_single_stat(self, soc):
         """
         Updates the stats of a single socket.
@@ -114,7 +137,7 @@ class SocketKnowledgeBase(object):
         :type soc: SCION-socket
         """
         if soc.is_alive():
-            new_stats = soc.getStats()
+            new_stats = soc.get_stats()
             if new_stats is not None:
                 method, path = SOC2REQ[soc]
                 self.kbase[(method, path)] = new_stats
@@ -122,7 +145,7 @@ class SocketKnowledgeBase(object):
     def _collect_stats(self):
         """
         Iterate through the list of all currently active sockets and call
-        getStats() on them.
+        get_stats() on them.
         """
         while True:
             logging.debug("Socket stats:")

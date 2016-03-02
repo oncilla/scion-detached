@@ -30,6 +30,7 @@ from lib.defines import (
 )
 from infrastructure.sibra_server.util import seg_to_hops
 from lib.errors import SCIONBaseError
+from lib.flagtypes import PathSegFlags as PSF
 from lib.packet.path import EmptyPath
 from lib.packet.path_mgmt import PathRecordsReg
 from lib.packet.scion import PacketType as PT
@@ -229,40 +230,50 @@ class SteadyPath(object):
             cmn_hdr, addr_hdr, EmptyPath(), [ext], udp_hdr, payload)
 
     def _register_path(self):
-        pld = self._create_reg_pld()
-        pkt = self._create_reg_pkt(pld)
         logging.debug("Registering path with local path server")
+        pkt = self._create_reg_pkt()
         self.sendq.put(pkt)
-        pkt = self._create_reg_pkt(pld, self.remote, self.seg.get_path(True))
         logging.debug("Registering path with core path server in %s",
                       self.remote)
+        pkt = self._create_reg_pkt(core=True)
         self.sendq.put(pkt)
 
-    def _create_reg_pld(self):
-        pcb = copy.deepcopy(self.seg)
-        # TODO(kormat): It might make sense to remove peer markings also, but
-        # they might also be needed for sibra steady paths that traverse peer
-        # links in the future.
-        pcb.remove_signatures()
-        latest = self.blocks[-1]
-        for asm, sof in zip(reversed(pcb.ases), latest.sofs):
-            asm.add_ext(SibraSegSOF.from_values(sof))
-        last_asm = pcb.ases[-1]
-        last_asm.add_ext(SibraSegInfo.from_values(self.id, latest.info))
-        last_asm.sig = sign(pcb.pack(), self.signing_key)
-        return PathRecordsReg.from_values({PST.SIBRA: [pcb]})
-
-    def _create_reg_pkt(self, pld, dest_ia=None, path=None):
-        if not dest_ia:
-            dest_ia = self.addr.isd_as
-        if not path:
+    def _create_reg_pkt(self, core=False):
+        if core:
+            dst_ia = self.remote
+            path = self.seg.get_path(True)
+            type_ = PST.DOWN
+            fwd_dir = False
+        else:
+            dst_ia = self.addr.isd_as
             path = EmptyPath()
-        dest = SCIONAddr.from_values(dest_ia, PT.PATH_MGMT)
+            type_ = PST.UP
+            fwd_dir = True
+        pcb = self._create_reg_pcb(fwd_dir=fwd_dir)
+        pld = PathRecordsReg.from_values({type_: [pcb]})
+        dest = SCIONAddr.from_values(dst_ia, PT.PATH_MGMT)
         cmn_hdr, addr_hdr = build_base_hdrs(self.addr, dest)
         udp_hdr = SCIONUDPHeader.from_values(
             self.addr, SCION_UDP_PORT, dest, SCION_UDP_PORT, pld)
         return SCIONL4Packet.from_values(
             cmn_hdr, addr_hdr, path, [], udp_hdr, pld)
+
+    def _create_reg_pcb(self, fwd_dir):
+        pcb = copy.deepcopy(self.seg)
+        # TODO(kormat): It might make sense to remove peer markings also, but
+        # they might also be needed for sibra steady paths that traverse peer
+        # links in the future.
+        pcb.remove_signatures()
+        pcb.flags |= PSF.SIBRA
+        latest = self.blocks[-1]
+        info = copy.deepcopy(latest.info)
+        info.fwd_dir = fwd_dir
+        for asm, sof in zip(reversed(pcb.ases), latest.sofs):
+            asm.add_ext(SibraSegSOF.from_values(sof))
+        last_asm = pcb.ases[-1]
+        last_asm.add_ext(SibraSegInfo.from_values(self.id, info))
+        last_asm.sig = sign(pcb.pack(), self.signing_key)
+        return pcb
 
     def __str__(self):
         with self._lock:

@@ -27,6 +27,7 @@ from Crypto.Hash import SHA256
 # SCION
 from lib.defines import EXP_TIME_UNIT
 from lib.errors import SCIONParseError
+from lib.flagtypes import PathSegFlags as PSF
 from lib.packet.opaque_field import HopOpaqueField, InfoOpaqueField
 from lib.packet.packet_base import SCIONPayloadBase
 from lib.packet.path import CorePath
@@ -134,7 +135,7 @@ class PCBMarking(MarkingBase):
     def __str__(self):
         s = []
         s.append("%s(%dB): ISD-AS %s:" % (self.NAME, len(self), self.isd_as))
-        s.append("  ig_rev_token: %s" % self.ig_rev_token)
+        s.append("  ig_rev_token: %s" % hex_str(self.ig_rev_token))
         s.append("  %s" % self.hof)
         return "\n".join(s)
 
@@ -248,9 +249,9 @@ class ASMarking(MarkingBase):
         """
         self.ext.append(ext)
 
-    def find_ext(self, type_):
+    def find_ext(self, type_):  # pragma: no cover
         for ext in self.ext:
-            if ext.TYPE == type_:
+            if ext.EXT_TYPE == type_:
                 return ext
 
     def __len__(self):  # pragma: no cover
@@ -274,12 +275,18 @@ class ASMarking(MarkingBase):
         s.append("  cert_ver: %s, ext_len %s, sig_len: %s, block_len: %s" %
                  (self.cert_ver, len(self._pack_ext()),
                   len(self.sig), self.block_len))
-        s.append("  %s" % self.pcbm)
-        for peer_marking in self.pms:
-            s.append("  %s" % peer_marking)
+        for line in str(self.pcbm).splitlines():
+            s.append("  %s" % line)
+        if self.pms:
+            s.append("  Peer markings:")
+        for pm in self.pms:
+            for line in str(pm).splitlines():
+                s.append("    %s" % line)
+        if self.ext:
+            s.append("  PCB Extensions:")
         for ext in self.ext:
-            s.append("  %s" % str(ext))
-        s.append("  eg_rev_token: %s" % self.eg_rev_token)
+            s.append("    %s" % str(ext))
+        s.append("  eg_rev_token: %s" % hex_str(self.eg_rev_token))
         s.append("  Signature: %s" % hex_str(self.sig))
         return "\n".join(s)
 
@@ -299,13 +306,14 @@ class PathSegment(SCIONPayloadBase):
     NAME = "PathSegment"
     PAYLOAD_CLASS = PayloadClass.PCB
     PAYLOAD_TYPE = PCBType.SEGMENT
-    MIN_LEN = InfoOpaqueField.LEN + 4 + 2
+    MIN_LEN = InfoOpaqueField.LEN + 4 + 2 + 1
 
     def __init__(self, raw=None):  # pragma: no cover
         super().__init__()
         self.iof = None
         self.trc_ver = 0
         self.if_id = 0
+        self.flags = 0
         self.ases = []
         self.min_exp_time = 2 ** 8 - 1  # TODO: eliminate 8 as magic number
         if raw:
@@ -317,10 +325,14 @@ class PathSegment(SCIONPayloadBase):
         """
         data = Raw(raw, self.NAME, self.MIN_LEN, min_=True)
         self.iof = InfoOpaqueField(data.pop(InfoOpaqueField.LEN))
-        # 4B for trc_ver and 2B for if_id.
-        self.trc_ver, self.if_id = struct.unpack("!IH", data.pop(6))
+        # 4B for trc_ver, 2B for if_id, 1B for flags.
+        self.trc_ver, self.if_id, self.flags = struct.unpack("!IHB",
+                                                             data.pop(7))
         self._parse_hops(data)
         return data.offset()
+
+    def is_sibra(self):  # pragma: no cover
+        return bool(self.flags & PSF.SIBRA)
 
     def _parse_hops(self, data):
         for _ in range(self.iof.hops):
@@ -331,15 +343,16 @@ class PathSegment(SCIONPayloadBase):
             self.add_as(ASMarking(data.pop(as_len)))
 
     @classmethod
-    def from_values(cls, iof):  # pragma: no cover
+    def from_values(cls, iof, flags=0):  # pragma: no cover
         inst = cls()
         inst.iof = iof
+        inst.flags = flags
         return inst
 
     def pack(self):
         packed = []
         packed.append(self.iof.pack())
-        packed.append(struct.pack("!IH", self.trc_ver, self.if_id))
+        packed.append(struct.pack("!IHB", self.trc_ver, self.if_id, self.flags))
         for asm in self.ases:
             packed.append(asm.pack())
         return b"".join(packed)
@@ -532,6 +545,7 @@ class PathSegment(SCIONPayloadBase):
                 if ext_desc:
                     exts.append(ext_desc)
         desc.append(" > ".join(hops))
+        desc.append(" Flags: %s" % PSF.to_str(self.flags))
         if exts:
             return "%s\n  %s" % ("".join(desc), "\n  ".join(exts))
         return "".join(desc)
@@ -547,12 +561,14 @@ class PathSegment(SCIONPayloadBase):
         s = []
         s.append("%s(%dB):" % (self.NAME, len(self)))
         s.append("  %s" % self.iof)
-        s.append("  trc_ver: %d, if_id: %d" % (self.trc_ver, self.if_id))
+        s.append("  trc_ver: %d, if_id: %d, Flags: %s" % (
+            self.trc_ver, self.if_id, PSF.to_str(self.flags)))
         for asm in self.ases:
-            s.append("  %s" % asm)
+            for line in str(asm).splitlines():
+                s.append("  %s" % line)
         return "\n".join(s)
 
-    def __hash__(self):
+    def __hash__(self):  # pragma: no cover
         return hash(self.get_hops_hash())  # FIMXE(PSz): should add timestamp?
 
 

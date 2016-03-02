@@ -93,7 +93,7 @@ bool SCIONProtocol::claimPacket(SCIONPacket *packet, uint8_t *buf)
     return false;
 }
 
-void SCIONProtocol::createManager(std::vector<SCIONAddr> &dstAddrs)
+void SCIONProtocol::createManager(std::vector<SCIONAddr> &dstAddrs, bool paths)
 {
 }
 
@@ -192,10 +192,14 @@ SSPProtocol::~SSPProtocol()
     pthread_mutex_destroy(&mSelectMutex);
 }
 
-void SSPProtocol::createManager(std::vector<SCIONAddr> &dstAddrs)
+void SSPProtocol::createManager(std::vector<SCIONAddr> &dstAddrs, bool paths)
 {
     mConnectionManager = new SSPConnectionManager(dstAddrs, mSocket, this);
     mPathManager = mConnectionManager;
+    if (paths)
+        mConnectionManager->getPaths();
+    else
+        mConnectionManager->getLocalAddress();
     mConnectionManager->startScheduler();
     pthread_create(&mTimerThread, NULL, timerThread, this);
 }
@@ -802,7 +806,7 @@ SUDPProtocol::~SUDPProtocol()
     delete mConnectionManager;
 }
 
-void SUDPProtocol::createManager(std::vector<SCIONAddr> &dstAddrs)
+void SUDPProtocol::createManager(std::vector<SCIONAddr> &dstAddrs, bool paths)
 {
     mConnectionManager = new SUDPConnectionManager(dstAddrs, mSocket);
     mPathManager = mConnectionManager;
