@@ -4,6 +4,7 @@
 
 #include "Extensions.h"
 #include "SCIONSocket.h"
+#include "SCIONDefines.h"
 
 void signalHandler(int signum)
 {
@@ -171,17 +172,21 @@ int SCIONSocket::setSocketOption(SCIONOption *option)
         return -EINVAL;
 
     switch (option->type) {
-    case SCION_OPTION_BLOCKING:
-        if (!mProtocol)
-            return -EPERM;
-        mProtocol->setBlocking(option->val);
-        return 0;
-    case SCION_OPTION_STAY_ISD:
-        if (!mProtocol)
-            return -EPERM;
-        return mProtocol->setStayISD(option->val);
-    default:
-        break;
+        case SCION_OPTION_BLOCKING:
+            if (!mProtocol)
+                return -EPERM;
+            mProtocol->setBlocking(option->val);
+            return 0;
+        case SCION_OPTION_STAY_ISD:
+            if (!mProtocol)
+                return -EPERM;
+            return mProtocol->setStayISD(option->val);
+        case SCION_OPTION_DRKEY_ENABLED:
+            if(!mProtocol)
+                return -EPERM;
+            return mProtocol->setOPTEnabled(option);
+        default:
+            break;
     }
     return 0;
 }

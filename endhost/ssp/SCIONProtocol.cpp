@@ -5,6 +5,8 @@
 #include "ProtocolConfigs.h"
 #include "SCIONProtocol.h"
 #include "Utils.h"
+#include "SCIONDefines.h"
+
 
 void * timerThread(void *arg)
 {
@@ -136,6 +138,13 @@ int SCIONProtocol::shutdown()
 
 void SCIONProtocol::removeDispatcher(int sock)
 {
+}
+
+int SCIONProtocol::setOPTEnabled(SCIONOption *ptr) {
+    mOPTEnabled = ptr->val;
+    memcpy(mOPTKey, ptr->data, OPT_KEY_BYTE_LENGTH);
+
+    return 0;
 }
 
 // SSP
@@ -920,3 +929,4 @@ void SUDPProtocol::start(SCIONPacket *packet, uint8_t *buf, int sock)
 void SUDPProtocol::getStats(SCIONStats *stats)
 {
 }
+

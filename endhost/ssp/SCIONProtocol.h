@@ -47,6 +47,8 @@ public:
     virtual int shutdown();
     virtual void removeDispatcher(int sock);
 
+    int setOPTEnabled(SCIONOption *ptr);
+
 protected:
     PathManager            *mPathManager;
 
@@ -69,6 +71,10 @@ protected:
 
     pthread_t              mTimerThread;
     pthread_mutex_t        mStateMutex;
+
+    // DRKey, OPT
+    int mOPTEnabled;
+    void *mOPTKey;
 };
 
 class SSPProtocol: public SCIONProtocol {

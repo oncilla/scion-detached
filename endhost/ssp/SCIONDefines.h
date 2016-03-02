@@ -121,6 +121,7 @@ typedef enum {
     SCION_OPTION_STAY_ISD,
     SCION_OPTION_AVOID_ISD,
     SCION_OPTION_AVOID_AD,
+    SCION_OPTION_DRKEY_ENABLED
 } SCIONOptionType;
 
 typedef struct {
@@ -129,5 +130,10 @@ typedef struct {
     void *data; // if int is not enough
     size_t len; // len of data
 } SCIONOption;
+
+
+// OPT
+
+#define OPT_KEY_BYTE_LENGTH 16
 
 #endif // SCION_DEFINES_H
