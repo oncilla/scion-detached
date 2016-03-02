@@ -110,6 +110,10 @@ class CertServer(SCIONElement):
         self.cc_cache = ZkSharedCache(self.zk, self.ZK_CC_CACHE_PATH,
                                       self._cached_entries_handler)
 
+        self.ad_sig_key = base64.b64decode(read_file(get_sig_key_file_path(self.conf_dir)))
+        self.opt_secret_value = PBKDF2(self.config.master_as_key, b"Derive OPT secret value")
+
+
     def worker(self):
         """
         Worker thread that takes care of reading shared entries from ZK, and
