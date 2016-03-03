@@ -37,7 +37,7 @@ from lib.defines import PATH_SERVICE, SCION_UDP_PORT
 from lib.errors import SCIONServiceLookupError
 from lib.flagtypes import PathSegFlags as PSF
 from lib.log import log_exception
-from lib.opt.ext.drkey import DRKeyRequestKey, DRKeyReplyKey, DRKeyAcknowledgeKeys, DRKeySendKeys, DRKeyConstants, \
+from lib.opt.drkey import DRKeyRequestKey, DRKeyReplyKey, DRKeyAcknowledgeKeys, DRKeySendKeys, DRKeyConstants, \
     DRKeyReplyCertChain, DRKeyRequestCertChain
 from lib.packet.host_addr import haddr_parse
 from lib.packet.path import EmptyPath, PathCombinator, PathBase

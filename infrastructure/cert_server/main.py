@@ -42,7 +42,7 @@ from lib.packet.cert_mgmt import (
     TRCReply,
     TRCRequest,
 )
-from lib.opt.ext.drkey import (
+from lib.opt.drkey import (
     DRKeyRequestKey,
     DRKeyReplyKey
 )

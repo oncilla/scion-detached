@@ -19,14 +19,14 @@
 # Stdlib
 import argparse
 import logging
+import struct
 import sys
 import threading
 import time
 
-import struct
 from nacl.utils import random as rand_bytes
 # SCION
-from lib.opt.ext.drkey import DRKeyConstants
+from lib.opt.drkey import DRKeyConstants
 from lib.opt.util import OPTStore, OPTCreatePacketParams, create_scion_udp_packet, get_opt_ext_hdr, set_answer_packet
 from endhost.sciond import SCIONDaemon, SCIOND_API_HOST, SCIOND_API_PORT, ApiRequestCodes
 from lib.defines import GEN_PATH, SCION_UDP_EH_DATA_PORT

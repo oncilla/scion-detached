@@ -24,7 +24,7 @@ import nose.tools as ntools
 
 # SCION
 from lib.errors import SCIONParseError
-from lib.opt.ext.drkey import (
+from lib.opt.drkey import (
     DRKeyRequestKey,
     DRKeyReplyKey,
     DRKeySendKeys,
