@@ -45,19 +45,13 @@
 
 #include "cJSON/cJSON.h"
 #include "scion.h"
-#include "libscion.h"
+#include "libdpdk.h"
 #include "lib/aesni.h"
 
 #define RTE_LOGTYPE_HSR RTE_LOGTYPE_USER2
 //#define RTE_LOG_LEVEL RTE_LOG_INFO
 #define RTE_LOG_LEVEL RTE_LOG_DEBUG
 #define VERIFY_OF
-
-#define INGRESS_IF(HOF)                                                        \
-  (ntohl((HOF)->ingress_egress_if) >>                                          \
-   (12 +                                                                       \
-    8)) // 12bit is  egress if and 8 bit gap between uint32 and 24bit field
-#define EGRESS_IF(HOF) ((ntohl((HOF)->ingress_egress_if) >> 8) & 0x000fff)
 
 #define LOCAL_NETWORK_ADDRESS IPv4(10, 56, 0, 0)
 #define GET_EDGE_ROUTER_IPADDR(IFID)                                           \
@@ -447,7 +441,7 @@ static inline int send_packet(struct rte_mbuf *m, uint8_t port)
     udp_hdr->dgram_cksum = 0;
     udp_hdr->dgram_cksum = rte_ipv4_udptcp_cksum(ipv4_hdr, udp_hdr);
 
-    RTE_LOG(DEBUG, HSR, "send_packet() port=%d\n", port);
+    RTE_LOG(DEBUG, HSR, "send_packet() dpdk_port=%d, %#x:%d\n", port, ipv4_hdr->dst_addr, ntohs(udp_hdr->dst_port));
     l2fwd_send_packet(m, port);
 }
 
@@ -848,8 +842,8 @@ static inline void process_path_mgmt_packet(struct rte_mbuf *m,
             InterfaceState *state = if_states + ifid;
             state->is_active = ntohs(*(uint16_t *)ptr);
             ptr += 2;
-            memcpy(state->rev_info, ptr, REVOCATION_LEN);
-            ptr += REVOCATION_LEN;
+            memcpy(state->rev_info, ptr, REV_TOKEN_LEN);
+            ptr += REV_TOKEN_LEN;
         }
         return;
     } else if (payload_type == PMT_REVOCATION_TYPE) {
@@ -863,7 +857,7 @@ static inline void process_path_mgmt_packet(struct rte_mbuf *m,
     }
 }
 
-static inline void deliver(struct rte_mbuf *m, uint32_t pclass,
+static inline void deliver(struct rte_mbuf *m, uint32_t ptype,
         uint8_t dpdk_rx_port)
 {
     struct ether_hdr *eth_hdr;
@@ -889,7 +883,7 @@ static inline void deliver(struct rte_mbuf *m, uint32_t pclass,
     udp_hdr->dst_port = htons(SCION_UDP_PORT);
 
     // TODO support IPv6
-    if (pclass == PATH_MGMT_PACKET) {
+    if (ptype == PATH_MGMT_PACKET) {
         printf("to path server\n");
         ipv4_hdr->dst_addr = path_servers[0];
 #ifdef SERVER_MAC_ADDRESS
@@ -904,7 +898,8 @@ static inline void deliver(struct rte_mbuf *m, uint32_t pclass,
         //           (void *)&scion_hdr->dst_Addr + SCION_ISD_AD_LEN,
         //           SCION_HOST_ADDR_LEN);
         void *dst_addr = get_dst_addr(sch);
-        rte_memcpy((void *)&ipv4_hdr->dst_addr, dst_addr, SCION_HOST_ADDR_LEN);
+        // TODO: IPv6?
+        rte_memcpy((void *)&ipv4_hdr->dst_addr, dst_addr, ADDR_IPV4_LEN);
 
 #ifdef SERVER_MAC_ADDRESS
         // FIXME
@@ -996,12 +991,12 @@ static inline void handle_ingress_xovr(struct rte_mbuf *m,
     iof = (InfoOpaqueField *)((unsigned char *)sch + sch->currentIOF);
     RTE_LOG(DEBUG, HSR, "iof->info %d\n", iof->info);
 
-    if (iof->info >>1 == OFT_SHORTCUT) {
+    if (iof->info >> 1 == OFT_SHORTCUT) {
         ingress_shortcut_xovr(m, dpdk_rx_port);
-    } else if (iof->info >>1 == OFT_INTRA_ISD_PEER ||
-            iof->info >>1 == OFT_INTER_ISD_PEER) {
+    } else if (iof->info >> 1 == OFT_INTRA_ISD_PEER ||
+            iof->info >> 1 == OFT_INTER_ISD_PEER) {
         ingress_peer_xovr(m, dpdk_rx_port);
-    } else if (iof->info >>1 == OFT_CORE) {
+    } else if (iof->info >> 1 == OFT_CORE) {
         ingress_core_xovr(m, dpdk_rx_port);
     } else {
         RTE_LOG(DEBUG, HSR, "Invalid iof->info %d\n", iof->info);
@@ -1377,6 +1372,11 @@ void handle_request(struct rte_mbuf *m, uint8_t dpdk_rx_port)
             (SCIONCommonHeader *)(rte_pktmbuf_mtod(m, unsigned char *)+sizeof(
                         struct ether_hdr) +
                     sizeof(struct ipv4_hdr) + sizeof(struct udp_hdr));
+
+        // FIXME: sample code to show extension finding works, should be deleted
+        uint8_t *ptr = find_extension(sch, END_TO_END, PATH_TRANSPORT);
+        if (ptr)
+            printf(">>>> path transport extension found <<<<\n");
 
         if (needs_local_processing(sch)) {
             uint8_t pclass = get_payload_class(sch);

@@ -42,14 +42,14 @@ include $(RTE_SDK)/mk/rte.vars.mk
 APP = hsr
 
 # all source are stored in SRCS-y
-SRCS-y := main.c scion.c libscion.c libdpdk.c
+SRCS-y := main.c scion.c address.c opaque_field.c packet.c udp.c libdpdk.c
 
 #CFLAGS += -O3 -w
-CFLAGS += -O9 -w
+CFLAGS += -O9 -w -I$(S)/../lib/libscion
 #CFLAGS += $(WERROR_FLAGS)
 
-LDLIBS += -L$(S)/lib -L$(S)/cJSON
-EXTRA_LDFLAGS += -laesni -lcJSON
+LDLIBS += -L$(S)/lib -L$(S)/cJSON -L$(S)/../lib/libscion
+EXTRA_LDFLAGS += -laesni -lcJSON -lscion
 
 
 include $(RTE_SDK)/mk/rte.extapp.mk

@@ -6,15 +6,16 @@ Default packages of Ubuntu 14.04 are a bit old, so you need to install them manu
 * Virtual Box version 5.0 (https://www.virtualbox.org/). Note that version 4.x does not support AES-NI, thus version 5.x is required.
 * Vagrant (https://www.vagrantup.com/downloads.html) for building a VM with DPDK
 
-
 Download base ubuntu image.
 ```
 vagrant box add bento/ubuntu-14.04
 ```
 
 Create two taps.  The VM uses eth10 and eth11 to communicate with mininet.  
-```sudo  ip tuntap add dev eth10 mode tap```  
-```sudo  ip tuntap add dev eth11 mode tap```
+```
+sudo ip tuntap add dev eth10 mode tap
+sudo ip tuntap add dev eth11 mode tap
+```
 
 Build and start VM.
 ```
@@ -25,6 +26,12 @@ vagrant up
 Open a console.
 ```
 vagrant ssh
+```
+
+Install pyyaml (for some reason is not installed by default)
+```
+sudo apt-get install python3-pip
+sudo pip3 install pyyaml
 ```
 
 Build HSR
@@ -43,33 +50,28 @@ Here we assume a tiny topology.
 [AD 13 servers]-[Mininet switch for AD13]-[tap]-[HSR in virtual box(AD 13 edge router)]-[tap]-[switch]-[AD 11 edge router]-[AD 11]-[AD 12]
 ```
 
-<!-- 
-## Change topology to tiny one.
-Change the configuration file specified in topology/generator.py  
-```DEFAULT_ADCONFIGURATIONS_FILE = "topology/tiny.json"```
--->
-
-
-
-
 ## Run mininet
 In the host,  
 ```
-sudo ./scion.sh topology -m -c topology/tiny.json
+./scion.sh topology -m -c topology/tiny.json
+topology/mininet/run_hsr.sh
 ```
-
-```sudo env "PATH=$PATH" topology/mininet/run_hsr.sh ```
 
 ## Run HSR
 In Virtual box,  
-```cd scion/hsr```
+```
+cd scion/hsr
+```
 
 Setup DPDK environment.  
 ```
 ./setup_dpdk.sh
 ```
+
 Start HSR.  
-```sudo exec.sh``` 
+```
+sudo exec.sh
+``` 
 
 
 
