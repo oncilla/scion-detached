@@ -15,18 +15,13 @@
 :mod:`opt` --- OPT extension header and its handler
 =================================================================
 """
-# Stdlib
-import logging
-import struct
-
 # SCION
 from Crypto.Hash import SHA256
 
 from lib.crypto.symcrypto import cbcmac, compute_session_key
 from lib.packet.ext_hdr import HopByHopExtension
 from lib.packet.packet_base import PayloadBase
-from lib.packet.scion_addr import ISD_AS
-from lib.util import Raw, SCIONTime
+from lib.util import Raw
 from lib.types import ExtHopByHopType
 
 
@@ -40,10 +35,6 @@ class OPTExt(HopByHopExtension):
     +--------+--------+--------+--------+--------+--------+--------+--------+
     |                            ...Session ID                              |
     +--------+--------+--------+--------+--------+--------+--------+--------+
-    |                               DataHash...                             |
-    +--------+--------+--------+--------+--------+--------+--------+--------+
-    |                            ...DataHash                                |
-    +--------+--------+--------+--------+--------+--------+--------+--------+
     |                                  PVF...                               |
     +--------+--------+--------+--------+--------+--------+--------+--------+
     |                               ...PVF                                  |
@@ -52,11 +43,10 @@ class OPTExt(HopByHopExtension):
     NAME = "OPTExt"
     EXT_TYPE = ExtHopByHopType.OPT
     SESSION_ID_LEN = 16
-    DATA_HASH_LEN = 16
     PVF_LEN = 16
     PADDING_LEN = 5
-    LEN = PADDING_LEN + SESSION_ID_LEN + DATA_HASH_LEN + PVF_LEN
-    NUMBER_OF_ADDITION_LINES = 6
+    LEN = PADDING_LEN + SESSION_ID_LEN + PVF_LEN
+    NUMBER_OF_ADDITION_LINES = 4
 
     def __init__(self, raw=None):
         """
@@ -67,7 +57,6 @@ class OPTExt(HopByHopExtension):
         """
         super().__init__()
         self.session_id = None
-        self.data_hash = None
         self.pvf = None
         if raw:
             self._parse(raw)
@@ -82,23 +71,19 @@ class OPTExt(HopByHopExtension):
         data.pop(self.PADDING_LEN)
 
         self.session_id = data.pop(self.SESSION_ID_LEN)
-        self.data_hash = data.pop(self.DATA_HASH_LEN)
         self.pvf = data.pop(self.PVF_LEN)
 
     @classmethod
-    def from_values(cls, session_id, data_hash=None, pvf=None):
+    def from_values(cls, session_id, pvf=None):
         """
         Construct extension
         :param session_id: Session ID
         :type session_id: bytes
-        :param data_hash: Data hash
-        :type data_hash: bytes
         :param pvf: Path verification Field
         :type pvf: bytes
         """
         inst = OPTExt()
         inst.session_id = session_id
-        inst.data_hash = data_hash
         inst.pvf = pvf
         inst._init_size(inst.NUMBER_OF_ADDITION_LINES)
         return inst
@@ -107,14 +92,12 @@ class OPTExt(HopByHopExtension):
         packed = []
         packed.append(bytes(self.PADDING_LEN))
         packed.append(self.session_id)
-        packed.append(self.data_hash)
         packed.append(self.pvf)
         raw = b"".join(packed)
         self._check_len(raw)
         return raw
 
     def reverse(self):
-        self.data_hash = None
         self.pvf = None
 
     @staticmethod
@@ -134,11 +117,8 @@ class OPTExt(HopByHopExtension):
         :type secret_value: bytes
         :return:
         """
-        old_pvf = self.pvf
         session_key = compute_session_key(secret_value, self.session_id)
         self.pvf = self.compute_intermediate_pvf(session_key, self.pvf)
-        logging.critical("############\n\nSession ID: %s\n\nSecret Value: %s\n\nSession Key: %s\n\nData Hash: %s\n\nOld PVF: %s\n\nPVF: %s\n\n",
-                  self.session_id, secret_value, session_key, self.data_hash, old_pvf, self.pvf)
         return []
 
     @staticmethod
@@ -153,20 +133,11 @@ class OPTExt(HopByHopExtension):
         # TODO(rsd) use better hash function ?
         return SHA256.new(payload.pack()).digest()[:16]
 
-    def set_data_hash(self, payload):
-        """
-
-        :param payload:
-        :type payload: PayloadBase
-        :return:
-        """
-        self.data_hash = self.compute_data_hash(payload)
-
     @staticmethod
     def compute_initial_pvf(session_key_dst, data_hash):
         return cbcmac(session_key_dst, data_hash)
 
-    def set_initial_pvf(self, session_key_dst, payload=None):
+    def set_initial_pvf(self, session_key_dst, payload):
         """
 
         :param session_key_dst:
@@ -174,11 +145,8 @@ class OPTExt(HopByHopExtension):
         :return:
         """
 
-        if payload:
-            self.set_data_hash(payload)
-        assert self.data_hash
-        self.pvf = self.compute_initial_pvf(session_key_dst, self.data_hash)
+        data_hash = self.compute_data_hash(payload)
+        self.pvf = self.compute_initial_pvf(session_key_dst, data_hash)
 
     def __str__(self):
-        return ('%s(%sB):\nsession id:%s\ndata hash:%s\npvf: %s' % (self.NAME, len(self),
-                                                                    self.session_id, self.data_hash, self.pvf))
+        return '%s(%sB):\nsession id:%s\npvf: %s' % (self.NAME, len(self), self.session_id, self.pvf)

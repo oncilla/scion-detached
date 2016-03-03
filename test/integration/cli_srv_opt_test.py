@@ -27,9 +27,8 @@ import struct
 from nacl.utils import random as rand_bytes
 # SCION
 from lib.opt.ext.drkey import DRKeyConstants
-from lib.opt.util import OPTStore, OPTCreatePacketParams, create_scion_udp_packet, is_hash_valid, get_opt_ext_hdr, \
-    set_answer_packet
-from endhost.sciond import SCIONDaemon, SCIOND_API_HOST, SCIOND_API_PORT, API_REQUEST_CODES
+from lib.opt.util import OPTStore, OPTCreatePacketParams, create_scion_udp_packet, get_opt_ext_hdr, set_answer_packet
+from endhost.sciond import SCIONDaemon, SCIOND_API_HOST, SCIOND_API_PORT, ApiRequestCodes
 from lib.defines import GEN_PATH, SCION_UDP_EH_DATA_PORT
 from lib.log import init_logging
 from lib.main import main_wrapper
@@ -155,10 +154,10 @@ def client_using_api(c_addr, s_addr):
         spkt = SCIONL4Packet(raw)
         opt.insert_packet(spkt)
 
-    send_request_to_api(API_REQUEST_CODES.OPT_SHARE_KEYS, payload=session_id)
+    send_request_to_api(ApiRequestCodes.OPT_SHARE_KEYS, payload=session_id)
     logging.debug("DRKeys sent")
 
-    data = Raw(send_request_to_api(API_REQUEST_CODES.OPT_GET_VERIFY_KEYS, payload=session_id), "Keys")
+    data = Raw(send_request_to_api(ApiRequestCodes.OPT_GET_VERIFY_KEYS, payload=session_id), "Keys")
     drkeys = []
     while len(data) > 0:
         drkeys.append(data.pop(16))
@@ -192,7 +191,7 @@ def client(c_addr, s_addr):
 
     session_id = rand_bytes(16)
     # start DRKey exchange
-    sd.init_drkeys(s_addr, path, session_id, non_blocking=True)
+    sd.init_drkeys(path, session_id, non_blocking=True)
 
     params = OPTCreatePacketParams()
     params.session_id = session_id
@@ -250,9 +249,6 @@ def server(addr):
         spkt = SCIONL4Packet(raw)
        # logging.info('SRV: received: %s', spkt.get_payload()._raw)
 
-        if not is_hash_valid(spkt):
-            logging.error("#########################################SRV: data hash is not valid")
-            sys.exit(1)
         opt.insert_packet(spkt)
 
         session_id = get_opt_ext_hdr(spkt).session_id

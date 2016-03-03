@@ -80,7 +80,7 @@ class Ping(object):
 
     def send(self):
 
-        self.sd.init_drkeys(dst=self.dst, path=self.path, session_id=self.session_id, non_blocking=True)
+        self.sd.init_drkeys(path=self.path, session_id=self.session_id, non_blocking=True)
 
         cmn_hdr, addr_hdr = build_base_hdrs(self.src, self.dst)
         payload = PayloadRaw(b"ping " + self.token)

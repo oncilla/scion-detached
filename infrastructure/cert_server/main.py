@@ -85,7 +85,7 @@ class CertServer(SCIONElement):
 
         self.drkey_requests = RequestHandler.start(
             "DRKey Requests", self._check_drkey, self._fetch_drkey, self._reply_drkey,
-        )  # TODO(rsd) replace by simple thread
+        )
 
         self.PLD_CLASS_MAP = {
             PayloadClass.CERT: {
@@ -201,7 +201,7 @@ class CertServer(SCIONElement):
 
     def proccess_drkey_request(self, pkt):
         """
-        Process a certificate chain request.
+        Process a DRKeyRequest.
 
         :param pkt: DRKey request packet.
         :type pkt: SCIONL4Packet
@@ -222,7 +222,7 @@ class CertServer(SCIONElement):
         public_key = cert.subject_enc_key
 
         self.drkey_requests.put(
-            ((drkey_request.session_id, public_key), (pkt.addrs.src, pkt.l4_hdr.src_port, hop))
+            (drkey_request.session_id, (pkt.addrs.src, pkt.l4_hdr.src_port, hop, public_key))
         )
 
     def _check_drkey(self, key):
@@ -235,13 +235,13 @@ class CertServer(SCIONElement):
         """
         Send the session key to the requester.
 
-        :param key: (Session ID, Public Key) tuple
-        :type key: (bytes, bytes)
-        :param info: (dst address, dst port, hop) tuple
-        :type info: (SCIONAddr, int, int)
+        :param key: Session ID tuple
+        :type key: (bytes
+        :param info: (dst address, dst port, hop, Public Key) tuple
+        :type info: (SCIONAddr, int, int, bytes)
         """
-        session_id, public_key = key
-        src, port, hop = info
+        session_id = key
+        src, port, hop, public_key = info
         assert isinstance(src, SCIONAddr)
 
         private_key = self.ad_sig_key

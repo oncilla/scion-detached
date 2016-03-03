@@ -226,6 +226,16 @@ class Router(SCIONElement):
         return ret
 
     def handle_opt(self, hdr, spkt, from_local_as):
+        """
+        Handle OPT-extension header.
+
+        Only update header if this router is ingress or if it is egress of the source AS.
+
+        :param hdr:
+        :param spkt:
+        :param from_local_as:
+        :return:
+        """
         if self.addr.isd_as == spkt.addrs.src.isd_as or not from_local_as:
             logging.debug("updating opt-header")
             hdr.process(self.opt_secret_value)
@@ -345,7 +355,9 @@ class Router(SCIONElement):
         Process drkey packet.
 
         :param drkey_pkt: The drkey packet.
-        :type drkey_pkt: SCIONL4Packet`
+        :type drkey_pkt: SCIONL4Packet
+        :param from_local_ad: if from local ad
+        :type from_local_ad: bool
         """
         payload = drkey_pkt.get_payload()
         if payload.PAYLOAD_TYPE == DRKT.REQUEST_KEY:
