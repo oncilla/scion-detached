@@ -360,11 +360,8 @@ class Router(SCIONElement):
         :param from_local_ad: if from local ad
         :type from_local_ad: bool
         """
-        payload = drkey_pkt.get_payload()
-        if payload.PAYLOAD_TYPE == DRKT.REQUEST_KEY:
-            self.relay_cert_server_packet(drkey_pkt, False)
-        else:
-            self.forward_packet(drkey_pkt, from_local_ad)
+        # Packets which are not for this AS will not be processed. Thus simply relay all to cert server.
+        self.relay_cert_server_packet(drkey_pkt, False)
 
     def fwd_sibra_service_pkt(self, spkt, _):
         """
