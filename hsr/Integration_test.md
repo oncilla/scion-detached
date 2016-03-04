@@ -36,6 +36,8 @@ sudo pip3 install pyyaml
 
 Build HSR
 ```
+cd ~/scion/lib/libscion
+make
 cd ~/scion/hsr/lib
 ./mk_lnx_lib.sh
 cd ~/scion/hsr/cJSON
@@ -54,6 +56,7 @@ Here we assume a tiny topology.
 In the host,  
 ```
 ./scion.sh topology -m -c topology/tiny.json
+topology/mininet/setup.sh (one time step for initial setup)
 topology/mininet/run_hsr.sh
 ```
 
