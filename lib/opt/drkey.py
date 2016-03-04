@@ -32,6 +32,10 @@ class DRKeyConstants(object):
     """
     Constants for drkey.
     """
+    HOP_BYTE_LENGTH = 1
+    SIG_LENGTH_BYTE_LENGTH = 2
+    CIPHER_LENGTH_BYTE_LENGTH = 2
+    CC_LENGTH_BYTE_LENGTH = 4
     DRKEY_BYTE_LENGTH = 16
     SESSION_ID_BYTE_LENGTH = 16
 
@@ -43,7 +47,7 @@ class DRKeyRequestKey(DRKeyPayloadBase):
     NAME = "DRKeyRequest"
     PAYLOAD_TYPE = DRKT.REQUEST_KEY
 
-    def __init__(self, raw=None):  # pragma: no cover
+    def __init__(self, raw=None):
         """
         Initialize an instance of the class DRKeyRequestKey.
 
@@ -63,9 +67,9 @@ class DRKeyRequestKey(DRKeyPayloadBase):
         Populates fields from a raw bytes block.
         """
         data = Raw(raw, self.NAME, len(raw))
-        self.hop = data.pop(1)
+        self.hop = data.pop(DRKeyConstants.HOP_BYTE_LENGTH)
         self.session_id = data.pop(DRKeyConstants.SESSION_ID_BYTE_LENGTH)
-        self.cc_length = int.from_bytes(data.pop(4), byteorder='big', signed=False)
+        self.cc_length = int.from_bytes(data.pop(DRKeyConstants.CC_LENGTH_BYTE_LENGTH), byteorder='big', signed=False)
         self.certificate_chain = CertificateChain(data.pop(self.cc_length).decode("UTF-8"))
 
     @classmethod
@@ -79,6 +83,8 @@ class DRKeyRequestKey(DRKeyPayloadBase):
         :type session_id: bytes
         :param certificate_chain: certificate chain of the source
         :type certificate_chain: CertificateChain
+        :returns an instance with the given parameters
+        :rtype DRKeyRequestKey
         """
         inst = cls()
         inst.hop = hop
@@ -96,13 +102,14 @@ class DRKeyRequestKey(DRKeyPayloadBase):
         packed.append(certificate_chain)
         return b"".join(packed)
 
-    def __len__(self):  # pragma: no cover
+    def __len__(self):
 
         if not self.cc_length:
             cc = self.certificate_chain.pack()
             self.cc_length = len(cc)
 
-        return 1 + DRKeyConstants.SESSION_ID_BYTE_LENGTH + 4 + self.cc_length
+        return (DRKeyConstants.HOP_BYTE_LENGTH + DRKeyConstants.SESSION_ID_BYTE_LENGTH +
+                DRKeyConstants.CC_LENGTH_BYTE_LENGTH + self.cc_length)
 
     def __str__(self):
         return "[%s(%dB): hop:%d SessionID: %s Certificate Chain: %s]" % (
@@ -117,7 +124,7 @@ class DRKeyReplyKey(DRKeyPayloadBase):
     NAME = "DRKeyReply"
     PAYLOAD_TYPE = DRKT.REPLY_KEY
 
-    def __init__(self, raw=None):  # pragma: no cover
+    def __init__(self, raw=None):
         """
         Initialize an instance of the class DRKeyRequestKey.
 
@@ -143,18 +150,21 @@ class DRKeyReplyKey(DRKeyPayloadBase):
         data = Raw(raw, self.NAME, len(raw))
         self.hop = data.pop(1)
         self.session_id = data.pop(DRKeyConstants.SESSION_ID_BYTE_LENGTH)
-        self.enc_key_length = int.from_bytes(data.pop(2), byteorder='big', signed=False)
+        self.enc_key_length = int.from_bytes(data.pop(DRKeyConstants.CIPHER_LENGTH_BYTE_LENGTH),
+                                             byteorder='big', signed=False)
         self.cipher = data.pop(self.enc_key_length)
-        self.sign_length = int.from_bytes(data.pop(2), byteorder='big', signed=False)
+        self.sign_length = int.from_bytes(data.pop(DRKeyConstants.SIG_LENGTH_BYTE_LENGTH),
+                                          byteorder='big', signed=False)
         self.signature = data.pop(self.sign_length)
-        self.cc_length = int.from_bytes(data.pop(4), byteorder='big', signed=False)
+        self.cc_length = int.from_bytes(data.pop(DRKeyConstants.CC_LENGTH_BYTE_LENGTH),
+                                        byteorder='big', signed=False)
         if self.cc_length:
             self.certificate_chain = CertificateChain(data.pop(self.cc_length).decode("UTF-8"))
 
     @classmethod
     def from_values(cls, hop, session_id, cipher, signature, certificate_chain):
         """
-        Returns PathSegmentInfo with fields populated from values.
+        Returns DRKeyReplyKey with fields populated from values.
 
         :param hop: hop the packet is addressed to
         :type hop: int (PathSegmentType)
@@ -162,10 +172,12 @@ class DRKeyReplyKey(DRKeyPayloadBase):
         :type session_id: bytes
         :param cipher: encrypted session key
         :type cipher: bytes
-        :param signature: signature of concatenated {cipher, session_id}
+        :param signature: signature of concatenated {cipher||session_id}
         :type signature: bytes
         :param certificate_chain: certificate chain of the AS at hop or None if AS is core
         :type certificate_chain: CertificateChain
+        :returns: an instance with the provided values
+        :rtype: DRKeyReplyKey
         """
         inst = cls()
         inst.hop = hop
@@ -200,7 +212,7 @@ class DRKeyReplyKey(DRKeyPayloadBase):
             packed.append(certificate_chain)
         return b"".join(packed)
 
-    def __len__(self):  # pragma: no cover
+    def __len__(self):
         if not self.enc_key_length:
             self.enc_key_length = len(self.cipher)
         if not self.sign_length:
@@ -210,7 +222,10 @@ class DRKeyReplyKey(DRKeyPayloadBase):
                 self.cc_length = len(self.certificate_chain.pack())
             else:
                 self.cc_length = 0
-        return 1 + 16 + 2 + self.enc_key_length + 2 + self.sign_length + 4 + self.cc_length
+        return (DRKeyConstants.HOP_BYTE_LENGTH + DRKeyConstants.SESSION_ID_BYTE_LENGTH +
+                DRKeyConstants.CIPHER_LENGTH_BYTE_LENGTH + self.enc_key_length +
+                DRKeyConstants.SIG_LENGTH_BYTE_LENGTH + self.sign_length +
+                DRKeyConstants.CC_LENGTH_BYTE_LENGTH + self.cc_length)
 
     def __str__(self):
         return "[%s(%dB): hop:%d EncSessionKey: %s Signature: %s]" % (
@@ -221,13 +236,11 @@ class DRKeyReplyKey(DRKeyPayloadBase):
 class DRKeySendKeys(DRKeyPayloadBase):
     """
     DRKeySendKeys class used in sending DRKeys to the destination.
-
-    # TODO support encrypted keys
     """
     NAME = "DRKeySendKeys"
     PAYLOAD_TYPE = DRKT.SEND_KEYS
 
-    def __init__(self, raw=None):  # pragma: no cover
+    def __init__(self, raw=None):
         """
         Initialize an instance of the class DRKeyRequestKey.
 
@@ -251,17 +264,20 @@ class DRKeySendKeys(DRKeyPayloadBase):
         """
         data = Raw(raw, self.NAME, len(raw))
         self.session_id = data.pop(DRKeyConstants.SESSION_ID_BYTE_LENGTH)
-        self.cipher_length = int.from_bytes(data.pop(2), byteorder='big', signed=False)
+        self.cipher_length = int.from_bytes(data.pop(DRKeyConstants.CIPHER_LENGTH_BYTE_LENGTH),
+                                            byteorder='big', signed=False)
         self.cipher = data.pop(self.cipher_length)
-        self.sign_length = int.from_bytes(data.pop(2), byteorder='big', signed=False)
+        self.sign_length = int.from_bytes(data.pop(DRKeyConstants.SIG_LENGTH_BYTE_LENGTH),
+                                          byteorder='big', signed=False)
         self.signature = data.pop(self.sign_length)
-        self.cc_length = int.from_bytes(data.pop(4), byteorder='big', signed=False)
+        self.cc_length = int.from_bytes(data.pop(DRKeyConstants.CC_LENGTH_BYTE_LENGTH),
+                                        byteorder='big', signed=False)
         self.certificate_chain = CertificateChain(data.pop(self.cc_length).decode("UTF-8"))
 
     @classmethod
     def from_values(cls, session_id, cipher, signature, certificate_chain):
         """
-        Returns PathSegmentInfo with fields populated from values.
+        Returns DRKeySendKeys with fields populated from values.
 
         :param session_id: session id from flow (16 B)
         :type session_id: bytes
@@ -269,9 +285,10 @@ class DRKeySendKeys(DRKeyPayloadBase):
         :type cipher: bytes
         :param signature: signature of {cipher||session_id} using the certificate
         :type signature: bytes
-        :param certiface_chain: certificate chain of the source
-        :type certiface_chain: CertificateChain
-
+        :param certificate_chain: certificate chain of the source
+        :type certificate_chain: CertificateChain
+        :returns an instance with the values
+        :rtype DRKeySendKeys
         """
         inst = cls()
         inst.session_id = session_id
@@ -296,15 +313,17 @@ class DRKeySendKeys(DRKeyPayloadBase):
         packed.append(cc_packed)
         return b"".join(packed)
 
-    def __len__(self):  # pragma: no cover
+    def __len__(self):
         if not self.cc_length:
             self.cc_length = len(self.certificate_chain.pack())
         if not self.cipher_length:
             self.cipher_length = len(self.cipher)
         if not self.sign_length:
             self.sign_length = len(self.signature)
-        return DRKeyConstants.SESSION_ID_BYTE_LENGTH + 2 + self.cipher_length + \
-            2 + self.sign_length + 4 + self.cc_length
+        return (DRKeyConstants.SESSION_ID_BYTE_LENGTH +
+                DRKeyConstants.CIPHER_LENGTH_BYTE_LENGTH + self.cipher_length +
+                DRKeyConstants.SIG_LENGTH_BYTE_LENGTH + self.sign_length +
+                DRKeyConstants.CC_LENGTH_BYTE_LENGTH + self.cc_length)
 
     def __str__(self):
         return "[%s(%dB): Session ID: %s Cipher: %s Signature: %s]" % (
@@ -319,7 +338,7 @@ class DRKeyAcknowledgeKeys(DRKeyPayloadBase):
     NAME = "DRKeyAcknowledgeKeys"
     PAYLOAD_TYPE = DRKT.ACKNOWLEDGE_KEYS
 
-    def __init__(self, raw=None):  # pragma: no cover
+    def __init__(self, raw=None):
         """
         Initialize an instance of the class DRKeyRequestKey.
 
@@ -343,17 +362,21 @@ class DRKeyAcknowledgeKeys(DRKeyPayloadBase):
         """
         data = Raw(raw, self.NAME, len(raw))
         self.session_id = data.pop(DRKeyConstants.SESSION_ID_BYTE_LENGTH)
-        self.cipher_length = int.from_bytes(data.pop(2), byteorder='big', signed=False)
+        self.cipher_length = int.from_bytes(data.pop(DRKeyConstants.CIPHER_LENGTH_BYTE_LENGTH),
+                                            byteorder='big', signed=False)
         self.cipher = data.pop(self.cipher_length)
-        self.sign_length = int.from_bytes(data.pop(2), byteorder='big', signed=False)
+        self.sign_length = int.from_bytes(data.pop(DRKeyConstants.SIG_LENGTH_BYTE_LENGTH),
+                                          byteorder='big', signed=False)
         self.signature = data.pop(self.sign_length)
-        self.cc_length = int.from_bytes(data.pop(4), byteorder='big', signed=False)
+        self.cc_length = int.from_bytes(data.pop(DRKeyConstants.CC_LENGTH_BYTE_LENGTH),
+                                        byteorder='big', signed=False)
         self.certificate_chain = CertificateChain(data.pop(self.cc_length).decode('utf-8'))
 
     @classmethod
     def from_values(cls, session_id, cipher, signature, certificate_chain):
         """
-        Returns PathSegmentInfo with fields populated from values.
+        Returns DRKeyAcknowledgeKeys with fields populated from values.
+
         :param session_id: session id of the flow (16 B)
         :type session_id: bytes
         :param cipher: the encrypted session key
@@ -362,6 +385,8 @@ class DRKeyAcknowledgeKeys(DRKeyPayloadBase):
         :type signature: bytes
         :param certificate_chain: certificate chain of the sender
         :type certificate_chain: CertificateChain
+        :returns an instance with the values
+        :rtype DRKeyAcknowledgeKeys
         """
         inst = cls()
         inst.session_id = session_id
@@ -386,11 +411,13 @@ class DRKeyAcknowledgeKeys(DRKeyPayloadBase):
         packed.append(cc_packed)
         return b"".join(packed)
 
-    def __len__(self):  # pragma: no cover
+    def __len__(self):
         if not self.cc_length:
             self.cc_length = len(self.certificate_chain.pack())
-        return DRKeyConstants.SESSION_ID_BYTE_LENGTH + 2 + len(self.cipher) + \
-            2 + len(self.signature) + 4 + self.cc_length
+        return (DRKeyConstants.SESSION_ID_BYTE_LENGTH +
+                DRKeyConstants.CIPHER_LENGTH_BYTE_LENGTH + len(self.cipher) +
+                DRKeyConstants.SIG_LENGTH_BYTE_LENGTH + len(self.signature) +
+                DRKeyConstants.CC_LENGTH_BYTE_LENGTH + self.cc_length)
 
     def __str__(self):
         return "[%s(%dB): Session ID: %s Cipher: %s Signature: %s]" % (
@@ -404,29 +431,25 @@ class DRKeyRequestCertChain(DRKeyPayloadBase):
     PAYLOAD_TYPE = DRKT.REQUEST_CERT_CHAIN
 
     def __init__(self, raw=None):
-        # self.session_id = None
         if raw:
             self._parse(raw)
 
     @classmethod
-    def from_values(cls):  # , session_id):
+    def from_values(cls):
         inst = cls()
-        # inst.session_id = session_id
         return inst
 
     def _parse(self, raw):
-        # data = Raw(raw, self.NAME, len(raw))
-        # self.session_id = data.pop(DRKeyConstants.SESSION_ID_BYTE_LENGTH)
         return
 
     def pack(self):
-        return b""  # b"".join([self.session_id])
+        return b""
 
     def __len__(self):
-        return 0  # DRKeyConstants.SESSION_ID_BYTE_LENGTH
+        return 0
 
     def __str__(self):
-        return "[DRKeyRequestCertChain]"  # % self.session_id
+        return "[DRKeyRequestCertChain]"
 
 
 class DRKeyReplyCertChain(DRKeyPayloadBase):
@@ -434,40 +457,36 @@ class DRKeyReplyCertChain(DRKeyPayloadBase):
     NAME = "DRKeyReplyCertChain"
     PAYLOAD_TYPE = DRKT.REPLY_CERT_CHAIN
 
-    def __init__(self, raw=None):  # pragma: no cover
+    def __init__(self, raw=None):
         """
         :param bytes raw: packed packet.
         """
         super().__init__()
-        # self.session_id = None
         self.certificate_chain = None
         if raw:
             self._parse(raw)
 
-    def _parse(self, raw):  # pragma: no cover
+    def _parse(self, raw):
         data = Raw(raw, self.NAME)
-        # self.session_id = data.pop(DRKeyConstants.SESSION_ID_BYTE_LENGTH)
         self.certificate_chain = CertificateChain(data.pop().decode('utf-8'))
 
     @classmethod
-    def from_values(cls, cert_chain):  # , session_id, cert_chain):  # pragma: no cover
+    def from_values(cls, cert_chain):
         """
         Return a Certificate Chain Reply with the values specified.
 
-        :param session_id:
         :param cert_chain: requested certificate chain.
         :type cert_chain: :class:`CertificateChain`
         """
         inst = cls()
-        # inst.session_id = session_id
         inst.certificate_chain = cert_chain
         return inst
 
-    def pack(self):  # pragma: no cover
-        return self.certificate_chain.pack()  # b"".join([self.session_id, self.certificate_chain.pack()])
+    def pack(self):
+        return self.certificate_chain.pack()
 
-    def __len__(self):  # pragma: no cover
-        return len(self.certificate_chain.pack())  # + DRKeyConstants.SESSION_ID_BYTE_LENGTH
+    def __len__(self):
+        return len(self.certificate_chain.pack())
 
     def __str__(self):
         return "[DRKeyReplyCertChain: %s(%dB): Cert Chain: %s]" % (
@@ -488,76 +507,3 @@ def parse_drkey_payload(type_, data):
         raise SCIONParseError("Unsupported drkey type: %s", type_)
     handler, len_ = _TYPE_MAP[type_]
     return handler(data.pop(len_))
-
-
-"""
-Modified retroactive DRKey
-
--Assume long-term symetric key K_sd between source and destination
--F(k, v) is a pseudo-random function using key k.
-
-Source S
------------------------------------
-1. Compute K_sdc = F(K_sd, FlowID)
-//2. Compute AUTHc = AuthEncrypt()
-2. Compute K_d = F(SV_s, FlowID)
-3. for intermediate in Path:
-		request Key from intermediate: {req, Pkd⁻¹}
-		Ki = recv(request)
-4. send Enc(K_sdc,{SessionID,k1, ..., Kn, K_d}) to D
-5. recv ack
-
-
-Intermediate I
------------------------------------
-1. Compute K_i = F(SV_i, FlowID)
-2. Encrypt and sign:
-	K_ic = Enc(PKc, K_i);
-	S_ic = Sign(PKi⁻¹, K_i||FlowID)
-3. Send {K_ic, S_ic} to S
-
-Destination D
------------------------------------
-1. Compute K_sdc = F(K_sd, FlowID)
-2. Store Dec(K_sdc, message)
-3. ack
-
-
-
-Retroactive Pathtrace
-
-
-Source S
------------------------------------
-1. Use K_d from mrDRKey
-2. Compute DATAHASH = H(Payload)
-3. Compute PVF = MAC(K_d, DATAHASH)
-4. Put header {DATAHASH, FlowID, PVF}
-
-(async)
-5. Compute PVF' = MAC(K_d, DATAHASH)
-			for i in Intermediate:
-				PVF' = MAC(K_i, PVF')
-	compare PVF == PVF'
-
-Intermediate I
-----------------------------------
-1. Compute K_i = F(SV_i, FlowID)
-2. Compute PVF = MAC(K_i, PVF)
-3. Update header {DATAHASH, FlowID, PVF}
-
-Destination D
-----------------------------------
-1. Store Header for later checking
-
-(async)
-2. To check:
-	Compute PVF' = MAC(K_d, DATAHASH)
-			for i in Intermediate:
-				PVF' = MAC(K_i, PVF')
-	compare PVF == PVF'
-3. Send Enc(K_d, PVF||DATAHASH) to source
-
-
-
-"""

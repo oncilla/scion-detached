@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-:mod:`lib_packet_drkey_test` --- lib.packet.drkey tests
+:mod:`lib_opt_drkey_test` --- lib.opt.drkey tests
 =====================================================
 """
 # Stdlib
@@ -30,7 +30,7 @@ from lib.opt.drkey import (
     DRKeySendKeys,
     DRKeyAcknowledgeKeys,
     parse_drkey_payload,
-    DRKeyConstants)
+    DRKeyConstants, DRKeyRequestCertChain, DRKeyReplyCertChain)
 from test.testcommon import (
     create_mock,
 )
@@ -38,64 +38,63 @@ from test.testcommon import (
 
 class TestDRKeyRequestKey(object):
     """
-    Unit tests for lib.packet.drkey.DRKeyRequestKey
+    Unit tests for lib.opt.drkey.DRKeyRequestKey
     """
 
-    @patch("lib.packet.drkey.Raw", autospec=True)
-    def test_parse(self, raw):
+    @patch("lib.opt.drkey.CertificateChain")
+    @patch("lib.opt.drkey.Raw", autospec=True)
+    def test_parse(self, raw, cert_chain):
         """
-        Unit tests for lib.packet.drkey.DRKeyRequestKey._parse
+        Unit tests for lib.opt.drkey.DRKeyRequestKey._parse
         """
 
         data = create_mock(["pop"])
-        data.pop.side_effect = "hop", "session_id", 0x10, "key"
+        data.pop.side_effect = b"hop", b"session_id", bytes([0x00, 0x00, 0x00, 0x11]), b"CertChain"
         raw.return_value = data
+        cert_chain.side_effect = lambda x: x
 
         inst = DRKeyRequestKey()
         inst._parse("data")
         ntools.assert_true(raw.call_count == 1)
-        ntools.eq_(inst.hop, "hop")
-        ntools.eq_(inst.session_id, "session_id")
-        ntools.eq_(inst.public_key_length, 16)
-        ntools.eq_(inst.public_key, "key")
-        data.pop.assert_any_call(16)
+        ntools.eq_(inst.hop, b"hop")
+        ntools.eq_(inst.session_id, b"session_id")
+        ntools.eq_(inst.cc_length, 17)
+        ntools.eq_(inst.certificate_chain, "CertChain")
+        data.pop.assert_any_call(17)
 
     def test_pack(self):
         """
-        Unit tests for lib.packets.drkey.DRKeyRequestKey.pack
+        Unit tests for lib.opts.drkey.DRKeyRequestKey.pack
         """
         session_id = bytes.fromhex("00112233445566778899aabbccddeeff")
-        key = bytes.fromhex("ffeeddccbbaa99887766554433221100")
+        cert_chain = bytes.fromhex("ffeeddccbbaa99887766554433221100")
 
-        inst = DRKeyRequestKey()
-        inst.hop = 0x3
-        inst.session_id = session_id
-        inst.public_key_length = len(key)
-        inst.public_key = key
+        inst = DRKeyRequestKey.from_values(0x3, session_id, create_mock(["pack"]))
+        inst.certificate_chain.pack.return_value = cert_chain
 
-        expected = b"".join([bytes([0x3]), session_id, bytes([len(key)]), key])
+        expected = b"".join([bytes([0x3]), session_id, bytes([0x00, 0x00, 0x00, len(cert_chain)]), cert_chain])
 
         ntools.eq_(inst.pack(), expected)
 
     def test_len(self):
         """
-        Unit tests for lib.packet.drkey.DRKeyRequestKey.__len__
+        Unit tests for lib.opt.drkey.DRKeyRequestKey.__len__
         """
-        inst = DRKeyRequestKey()
-        inst.public_key = [1,2,3,4,5,6,7,8]
+        inst = DRKeyRequestKey.from_values(1, bytes(16), create_mock(["pack"]))
+        inst.certificate_chain.pack.return_value = bytes(32)
         # Call
-        ntools.eq_(len(inst), 1 + 16 + 1 + 8)
+        ntools.eq_(len(inst), 1 + 16 + 4 + 32)
 
 
 class TestDRKeyReplyKey(object):
     """
-    Unit tests for lib.packet.drkey.DRKeyRequestKey
+    Unit tests for lib.opt.drkey.DRKeyRequestKey
     """
-    @patch("lib.packet.drkey.CertificateChain")
-    @patch("lib.packet.drkey.Raw", autospec=True)
+    @patch("lib.opt.drkey.CertificateChain")
+    @patch("lib.opt.drkey.Raw", autospec=True)
     def test_parse(self, raw, cert_chain):
         """
-        Unit tests for lib.packet.drkey.DRKeyReplyKey._parse
+        Unit tests for lib.opt.drkey.DRKeyReplyKey._parse
         """
 
         data = create_mock(["pop"])
@@ -128,7 +127,7 @@ class TestDRKeyReplyKey(object):
 
     def test_pack(self):
         """
-        Unit tests for lib.packets.drkey.DRKeyReplyKey.pack
+        Unit tests for lib.opts.drkey.DRKeyReplyKey.pack
         """
         hop = 0x12
         session_id = bytes.fromhex("00112233445566778899aabbccddeeff")
@@ -152,7 +151,7 @@ class TestDRKeyReplyKey(object):
 
     def test_len(self):
         """
-        Unit tests for lib.packet.drkey.DRKeyReplyKey.__len__
+        Unit tests for lib.opt.drkey.DRKeyReplyKey.__len__
         """
         hop = 0x12
         session_id = bytes.fromhex("00112233445566778899aabbccddeeff")
@@ -168,114 +167,238 @@ class TestDRKeyReplyKey(object):
 
 class TestDRKeySendKeys(object):
     """
-    Unit tests for lib.packet.drkey.DRKeySendKeys
+    Unit tests for lib.opt.drkey.DRKeySendKeys
     """
-    @patch("lib.packet.drkey.Raw", autospec=True)
-    def test_parse(self, raw):
+    @patch("lib.opt.drkey.CertificateChain")
+    @patch("lib.opt.drkey.Raw", autospec=True)
+    def test_parse(self, raw, cert_chain):
         """
-        Unit tests for lib.packet.drkey.DRKeySendKeys._parse
+        Unit tests for lib.opt.drkey.DRKeySendKeys._parse
         """
 
         data = create_mock(["pop"])
         data.pop.side_effect = (b"session_id",
-                                bytes([0x00, 0x02]),
-                                b"key1",
-                                b"key2",
+                                bytes([0x00, 0x0a]),
+                                b"cipher",
+                                bytes([0x00, 0x0b]),
+                                b"signature",
+                                bytes([0x00, 0x00, 0x00, 0x0c]),
+                                b"certificate_chain"
                                 )
         raw.return_value = data
+        cert_chain.side_effect = lambda x: x
 
         inst = DRKeySendKeys()
         inst._parse("data")
         ntools.assert_true(raw.call_count == 1)
+        data.pop.assert_any_call(0x0a)
+        data.pop.assert_any_call(0x0b)
+        data.pop.assert_any_call(0x0c)
         ntools.eq_(inst.session_id, b"session_id")
-        ntools.eq_(inst.keys_length, 2)
-        ntools.eq_(inst.keys, [b"key1", b"key2"])
+        ntools.eq_(inst.cipher_length, 0x0a)
+        ntools.eq_(inst.cipher, b"cipher")
+        ntools.eq_(inst.sign_length, 0x0b)
+        ntools.eq_(inst.signature, b"signature")
+        ntools.eq_(inst.cc_length, 0x0c)
+        ntools.eq_(inst.certificate_chain, "certificate_chain")
 
     def test_pack(self):
         """
-        Unit tests for lib.packets.drkey.DRKeySendKeys.pack
+        Unit tests for lib.opts.drkey.DRKeySendKeys.pack
         """
         session_id = bytes.fromhex("00112233445566778899aabbccddeeff")
+        cipher = b"can i haz cheezburger"
+        signature = b"hello I'm dog"
+        certificate_chain = b"I took an arrow in the knee"
 
-        inst = DRKeySendKeys.from_values(session_id, [b"key1", b"key2"])
+        inst = DRKeySendKeys.from_values(session_id, cipher, signature, create_mock(["pack"]))
+        inst.certificate_chain.pack.return_value = certificate_chain
         expected = b"".join([session_id,
-                             bytes([0x00, 0x02]),
-                             b"key1",
-                             b"key2",
+                             bytes([0x00, 0x15]),
+                             b"can i haz cheezburger",
+                             bytes([0x00, 0x0d]),
+                             b"hello I'm dog",
+                             bytes([0x00, 0x00, 0x00, 0x1b]),
+                             b"I took an arrow in the knee",
                              ])
 
         ntools.eq_(inst.pack(), expected)
 
     def test_len(self):
         """
-        Unit tests for lib.packet.drkey.DRKeySendKeys.__len__
+        Unit tests for lib.opt.drkey.DRKeySendKeys.__len__
         """
 
         session_id = bytes.fromhex("00112233445566778899aabbccddeeff")
+        cipher = b"can i haz cheezburger"
+        signature = b"hello I'm dog"
+        certificate_chain = b"I took an arrow in the knee"
 
-        inst = DRKeySendKeys.from_values(session_id, [b"key1", b"key2"])
+        inst = DRKeySendKeys.from_values(session_id, cipher, signature, create_mock(["pack"]))
+        inst.certificate_chain.pack.return_value = certificate_chain
 
-        ntools.eq_(len(inst), 16 + 2 + 2 * DRKeyConstants.DRKEY_BYTE_LENGTH)
+        ntools.eq_(len(inst), 16 + 2 + len(cipher) + 2 + len(signature) + 4 + len(certificate_chain))
 
 
-class DRKeyAcknowledgeKeys(object):
+class TestDRKeyAcknowledgeKeys(object):
     """
-    Unit tests for lib.packet.drkey.DRKeyAcknowledgeKeys
+    Unit tests for lib.opt.drkey.DRKeyAcknowledgeKeys
     """
-    @patch("lib.packet.drkey.Raw", autospec=True)
-    def test_parse(self, raw):
+    @patch("lib.opt.drkey.CertificateChain")
+    @patch("lib.opt.drkey.Raw", autospec=True)
+    def test_parse(self, raw, cert_chain):
         """
-        Unit tests for lib.packet.drkey.DRKeyAcknowledgeKeys._parse
+        Unit tests for lib.opt.drkey.DRKeyAcknowledgeKeys._parse
         """
 
         data = create_mock(["pop"])
         data.pop.side_effect = (b"session_id",
-                                b"src key",
-                                bytes([0x00, 0x02]),
+                                bytes([0x00, 0x0a]),
+                                b"cipher",
+                                bytes([0x00, 0x0b]),
                                 b"signature",
+                                bytes([0x00, 0x00, 0x00, 0x0c]),
+                                b"certificate_chain",
                                 )
         raw.return_value = data
+        cert_chain.side_effect = lambda x: x
 
         inst = DRKeyAcknowledgeKeys()
         inst._parse("data")
         ntools.assert_true(raw.call_count == 1)
         ntools.eq_(inst.session_id, b"session_id")
-        ntools.eq_(inst.src_key, b"src key")
-        ntools.eq_(inst.sign_length, 2)
+        ntools.eq_(inst.cipher_length, 0x0a)
+        ntools.eq_(inst.cipher, b"cipher")
+        ntools.eq_(inst.sign_length, 0x0b)
         ntools.eq_(inst.signature, b"signature")
+        ntools.eq_(inst.cc_length, 0x0c)
+        ntools.eq_(inst.certificate_chain, "certificate_chain")
 
     def test_pack(self):
         """
-        Unit tests for lib.packets.drkey.DRKeyAcknowledgeKeys.pack
+        Unit tests for lib.opts.drkey.DRKeyAcknowledgeKeys.pack
         """
         session_id = bytes.fromhex("00112233445566778899aabbccddeeff")
+        # A Haiku for you
+        cipher = b"no, no, no, no, no"
+        signature = b"no, no, no, no, no, no, no"
+        cert_chain = b"no, no, no, no, no"
 
-        inst = DRKeyAcknowledgeKeys.from_values(session_id, b"src key", b"signature")
+        inst = DRKeyAcknowledgeKeys.from_values(session_id, cipher, signature, create_mock(["pack"]))
+        inst.certificate_chain.pack.return_value = cert_chain
         expected = b"".join([session_id,
-                             b"src key",
-                             bytes([0x00, 0x09]),
-                             b"signature",
+                             bytes([0x00, 0x12]),
+                             cipher,
+                             bytes([0x00, 0x1a]),
+                             signature,
+                             bytes([0x00, 0x00, 0x00, 0x12]),
+                             cert_chain,
                              ])
 
         ntools.eq_(inst.pack(), expected)
 
     def test_len(self):
         """
-        Unit tests for lib.packet.drkey.DRKeyAcknowledgeKeys.__len__
+        Unit tests for lib.opt.drkey.DRKeyAcknowledgeKeys.__len__
         """
 
         session_id = bytes.fromhex("00112233445566778899aabbccddeeff")
+        cipher = b"yes, yes, yes, yes, yes"
+        signature = b"yes, yes, yes, yes, yes, yes, yes"
+        cert_chain = b"yes, yes, yes, yes, yes"
 
-        inst = DRKeyAcknowledgeKeys.from_values(session_id, b"key", b"signature")
+        inst = DRKeyAcknowledgeKeys.from_values(session_id, cipher, signature, create_mock(["pack"]))
+        inst.certificate_chain.pack.return_value = cert_chain
 
-        ntools.eq_(len(inst), 16 + 16 + 2 + len(b"signature"))
+        ntools.eq_(len(inst), 16 + 2 + len(cipher) + 2 + len(signature) + 4 + len(cert_chain))
+
+
+class TestDRKeyRequestCertChain(object):
+    """
+    Unit tests for lib.opt.drkey.DRKeyRequestCertChain
+    """
+
+    @patch("lib.opt.drkey.Raw", autospec=True)
+    def test_parse(self, raw):
+        """
+        Unit tests for lib.opt.drkey.DRKeyRequestCertChain._parse
+        """
+
+        data = create_mock(["pop"])
+        data.pop.side_effect = b"you should not see this"
+
+        inst = DRKeyRequestCertChain()
+        inst._parse("data")
+        ntools.assert_true(raw.call_count == 0)
+
+    def test_pack(self):
+        """
+        Unit tests for lib.opts.drkey.DRKeyRequestCertChain.pack
+        """
+        inst = DRKeyRequestCertChain()
+        expected = b""
+
+        ntools.eq_(inst.pack(), expected)
+
+    def test_len(self):
+        """
+        Unit tests for lib.opt.drkey.DRKeyRequestCertChain.__len__
+        """
+        inst = DRKeyRequestCertChain()
+        # Call
+        ntools.eq_(len(inst), 0)
+
+
+class TestDRKeyReplyCertChain(object):
+    """
+    Unit tests for lib.opt.drkey.DRKeyReplyCertChain
+    """
+
+    @patch("lib.opt.drkey.CertificateChain")
+    @patch("lib.opt.drkey.Raw", autospec=True)
+    def test_parse(self, raw, cert_chain):
+        """
+        Unit tests for lib.opt.drkey.DRKeyReplyCertChain._parse
+        """
+
+        data = create_mock(["pop"])
+        data.pop.return_value = b"CertChain"
+        raw.return_value = data
+        cert_chain.side_effect = lambda x: x
+
+        inst = DRKeyReplyCertChain()
+        inst._parse("data")
+        ntools.assert_true(raw.call_count == 1)
+        data.pop.assert_called_once_with()
+        ntools.eq_(inst.certificate_chain, "CertChain")
+
+    def test_pack(self):
+        """
+        Unit tests for lib.opts.drkey.DRKeyReplyCertChain.pack
+        """
+        cert_chain = bytes.fromhex("ffeeddccbbaa99887766554433221100")
+
+        inst = DRKeyReplyCertChain.from_values(create_mock(["pack"]))
+        inst.certificate_chain.pack.return_value = cert_chain
+
+        expected = b"".join([cert_chain])
+        ntools.eq_(inst.pack(), expected)
+
+    def test_len(self):
+        """
+        Unit tests for lib.opt.drkey.DRKeyReplyCertChain.__len__
+        """
+        inst = DRKeyReplyCertChain.from_values(create_mock(["pack"]))
+        inst.certificate_chain.pack.return_value = bytes(32)
+        # Call
+        ntools.eq_(len(inst), 32)
 
 
 class TestParseDRKeyPayload(object):
     """
-    Unit tests for lib.packet.drkey.parse_drkey_payload
+    Unit tests for lib.opt.drkey.parse_drkey_payload
     """
-    @patch("lib.packet.drkey._TYPE_MAP", new_callable=dict)
+    @patch("lib.opt.drkey._TYPE_MAP", new_callable=dict)
     def _check_supported(self, type_, type_map):
         type_map[0] = create_mock(), 20
         type_map[1] = create_mock(), None

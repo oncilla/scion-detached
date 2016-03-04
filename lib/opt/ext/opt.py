@@ -27,6 +27,10 @@ from lib.types import ExtHopByHopType
 
 class OPTExt(HopByHopExtension):
     """
+    OPT extension Header.
+
+    This extension header supports retroactive Pathtrace from the OPT-Protocol.
+
     0B       1        2        3        4        5        6        7
     +--------+--------+--------+--------+--------+--------+--------+--------+
     | xxxxxxxxxxxxxxxxxxxxxxxx |                    padding                 |
@@ -77,10 +81,13 @@ class OPTExt(HopByHopExtension):
     def from_values(cls, session_id, pvf=None):
         """
         Construct extension
-        :param session_id: Session ID
+
+        :param session_id: Session ID (16 B)
         :type session_id: bytes
-        :param pvf: Path verification Field
+        :param pvf: Path verification Field (16 B)
         :type pvf: bytes
+        :returns: returns an instance
+        :rtype: OPTExt
         """
         inst = OPTExt()
         inst.session_id = session_id
@@ -103,19 +110,29 @@ class OPTExt(HopByHopExtension):
     @staticmethod
     def compute_intermediate_pvf(session_key, pvf):
         """
+        Compute the intermediate pvf.
 
-        :param session_key:
-        :param pvf:
-        :return:
+        This method is used by process to update the PVF field.
+
+        :param session_key: The session key of the AS (16 B)
+        :type session_key: bytes
+        :param pvf: The PVF value (16 B)
+        :type pvf: bytes
+        :returns: the updated PVF value (16 B)
+        :rtype: bytes
         """
         return cbcmac(session_key, pvf)
 
     def process(self, secret_value):
         """
+        Process the header.
 
-        :param secret_value:
+        This method is used by AS to process the extension header.
+
+        :param secret_value: The secret value of the AS (16 B)
         :type secret_value: bytes
-        :return:
+        :returns: empty list
+        :rtype: list
         """
         session_key = compute_session_key(secret_value, self.session_id)
         self.pvf = self.compute_intermediate_pvf(session_key, self.pvf)
@@ -124,10 +141,12 @@ class OPTExt(HopByHopExtension):
     @staticmethod
     def compute_data_hash(payload):
         """
+        Compute the DataHash of the payload.
 
-        :param payload:
+        :param payload: The payload
         :type payload: PayloadBase
-        :return:
+        :returns: the DataHash of the payload (16 B)
+        :rtype: bytes
         """
         assert isinstance(payload, PayloadBase)
         # TODO(rsd) use better hash function ?
@@ -135,14 +154,25 @@ class OPTExt(HopByHopExtension):
 
     @staticmethod
     def compute_initial_pvf(session_key_dst, data_hash):
+        """
+        Compute the initial value of the PVF.
+
+        :param session_key_dst: The session key of the destination (16 B)
+        :type session_key_dst: bytes
+        :param data_hash: The DataHash of the payload (16 B)
+        :type data_hash: bytes
+        :returns: the initial PVF value (16 B)
+        :rtype: bytes
+        """
         return cbcmac(session_key_dst, data_hash)
 
     def set_initial_pvf(self, session_key_dst, payload):
         """
 
-        :param session_key_dst:
-        :param payload:
-        :return:
+        :param session_key_dst: The session key of the destination (16 B)
+        :type session_key_dst: bytes
+        :param payload: The payload of the packet
+        :type payload: PayloadBase
         """
 
         data_hash = self.compute_data_hash(payload)
