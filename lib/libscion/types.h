@@ -19,6 +19,7 @@
 #define IFID_CLASS 1
 #define CERT_CLASS 2
 #define PATH_CLASS 3
+#define DRKEY_CLASS 5
 
 // IFID Packet types
 #define IFID_PAYLOAD_TYPE 0
@@ -31,5 +32,8 @@
 #define PMT_REVOCATION_TYPE 4
 #define PMT_IFSTATE_INFO_TYPE 5
 #define PMT_IFSTATE_REQ_TYPE 6
+
+// DRKEY PayloadTypes
+#define DRKEY_REQUEST_KEY_TYPE
 
 #endif

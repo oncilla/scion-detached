@@ -10,6 +10,7 @@
 
 #define TRACEROUTE 0
 #define SIBRA 1
+#define OPT_EXTENSION_TYPE 2
 
 #define PATH_TRANSPORT 0
 #define PATH_PROBE 1

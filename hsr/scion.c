@@ -42,6 +42,7 @@
 #include <rte_tcp.h>
 #include <rte_udp.h>
 #include <rte_string_fns.h>
+#include <netinet/in.h>
 
 #include "cJSON/cJSON.h"
 #include "scion.h"
@@ -1373,10 +1374,12 @@ void handle_request(struct rte_mbuf *m, uint8_t dpdk_rx_port)
                         struct ether_hdr) +
                     sizeof(struct ipv4_hdr) + sizeof(struct udp_hdr));
 
-        // FIXME: sample code to show extension finding works, should be deleted
-        uint8_t *ptr = find_extension(sch, END_TO_END, PATH_TRANSPORT);
-        if (ptr)
-            printf(">>>> path transport extension found <<<<\n");
+        uint8_t *opt_ext_hdr = find_extension(sch, HOP_BY_HOP, OPT_EXTENSION_TYPE);
+        if (opt_ext_hdr){
+            uint8_t *session_id = opt_ext_hdr + SCION_EXT_LINE;
+            uint8_t *pvf = session_id + 2 * SCION_EXT_LINE;
+            // TODO update pvf
+        }
 
         if (needs_local_processing(sch)) {
             uint8_t pclass = get_payload_class(sch);
@@ -1395,6 +1398,9 @@ void handle_request(struct rte_mbuf *m, uint8_t dpdk_rx_port)
                 break;
             case PATH_CLASS:
                 process_path_mgmt_packet(m, from_local_socket, dpdk_rx_port);
+                break;
+            case DRKEY_CLASS:
+                relay_cert_server_packet(m, 0, dpdk_rx_port);
                 break;
             default:
                 RTE_LOG(DEBUG, HSR, "unknown packet class %d ?\n", pclass);
