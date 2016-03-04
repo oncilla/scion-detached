@@ -58,10 +58,7 @@ from lib.opt.ext.opt import OPTExt
 from lib.packet.scion_addr import SCIONAddr
 from lib.sibra.ext.ext import SibraExtBase
 from lib.packet.ext.traceroute import TracerouteExt
-from lib.packet.path_mgmt import (
-    RevocationInfo,
-    IFStateRequest,
-)
+from lib.packet.path_mgmt import RevocationInfo, IFStateRequest
 from lib.packet.scion import (
     IFIDPayload,
     PacketType as PT,
@@ -167,11 +164,11 @@ class Router(SCIONElement):
             name="ER.request_ifstates", daemon=True).start()
         SCIONElement.run(self)
 
-    def send(self, spkt, addr, port=SCION_UDP_PORT):
+    def send(self, spkt, addr=None, port=SCION_UDP_PORT):
         """
         Send a spkt to addr (class of that object must implement
         __str__ which returns IPv4 addr) using port and local or remote
-        socket.
+        socket. If addr isn't set, use the destination address in the packet.
 
         :param spkt: The packet to send.
         :type spkt: :class:`lib.spkt.SCIONspkt`
@@ -179,6 +176,8 @@ class Router(SCIONElement):
         :type addr: :class:`IPv4Adress`
         :param int port: The port number of the next hop.
         """
+        if addr is None:
+            addr = spkt.addrs.dst.host
         from_local_as = addr == self.interface.to_addr
         self.handle_extensions(spkt, False, from_local_as)
         if from_local_as:
@@ -250,8 +249,7 @@ class Router(SCIONElement):
         pkt = self._build_packet(PT.BEACON, dst_ia=self.interface.isd_as,
                                  payload=ifid_pld)
         while True:
-            self.send(pkt, self.interface.to_addr,
-                      self.interface.to_udp_port)
+            self.send(pkt, self.interface.to_addr, self.interface.to_udp_port)
             time.sleep(IFID_PKT_TOUT)
 
     def request_ifstates(self):
@@ -265,7 +263,7 @@ class Router(SCIONElement):
             logging.info("Sending IFStateRequest for all interfaces.")
             for bs in self.topology.beacon_servers:
                 req_pkt.addrs.dst.host = bs.addr
-                self.send(req_pkt, bs.addr)
+                self.send(req_pkt)
             sleep_interval(start_time, self.IFSTATE_REQ_INTERVAL,
                            "request_ifstates")
 
@@ -290,11 +288,12 @@ class Router(SCIONElement):
             logging.error("Unable to deliver ifid packet: %s", e)
             return
         for bs_addr in bs_addrs:
-            self.send(pkt, bs_addr)
+            pkt.addrs.dst.host = bs_addr
+            self.send(pkt)
 
     def get_srv_addr(self, service, pkt):
         """
-        For a given service return a server address. Guarantee, that all packets
+        For a given service return a server address. Guarantee that all packets
         from the same source to a given service are sent to the same server.
 
         :param str service: Service to query for.
@@ -327,7 +326,8 @@ class Router(SCIONElement):
             except SCIONServiceLookupError as e:
                 logging.error("Unable to deliver PCB: %s", e)
                 return
-            self.send(pkt, bs_addr)
+            pkt.addrs.dst.host = bs_addr
+            self.send(pkt)
 
     def relay_cert_server_packet(self, spkt, from_local_as):
         """
@@ -335,7 +335,7 @@ class Router(SCIONElement):
 
         :param spkt: the SCION packet to forward.
         :type spkt: :class:`lib.packet.scion.SCIONPacket`
-        :param bool from_local_ad:
+        :param bool from_local_as:
             whether or not the packet is from the local AS.
         """
         if from_local_as:
@@ -347,6 +347,7 @@ class Router(SCIONElement):
             except SCIONServiceLookupError as e:
                 logging.error("Unable to deliver cert packet: %s", e)
                 return
+            spkt.addrs.dst.host = addr
             port = SCION_UDP_PORT
         self.send(spkt, addr, port)
 
@@ -377,8 +378,8 @@ class Router(SCIONElement):
         except SCIONServiceLookupError as e:
             logging.error("Unable to deliver sibra service packet: %s", e)
             return
-        port = SCION_UDP_PORT
-        self.send(spkt, addr, port)
+        spkt.addrs.dst.host = addr
+        self.send(spkt)
 
     def process_path_mgmt_packet(self, mgmt_pkt, from_local_as):
         """
@@ -410,7 +411,8 @@ class Router(SCIONElement):
                     except SCIONServiceLookupError:
                         logging.error("No local PS to forward revocation to.")
                         return
-                    self.send(mgmt_pkt, ps)
+                    mgmt_pkt.addrs.dst.host = ps
+                    self.send(mgmt_pkt)
         if not from_local_as and mgmt_pkt.path.is_last_path_hof():
             self.deliver(mgmt_pkt, PT.PATH_MGMT)
         else:
@@ -480,6 +482,7 @@ class Router(SCIONElement):
                 except SCIONServiceLookupError as e:
                     logging.error("Unable to deliver path mgmt packet: %s", e)
                     return
+                spkt.addrs.dst.host = addr
             port = SCION_UDP_PORT
         elif addr == PT.SB_PKT:
             self.fwd_sibra_service_pkt(spkt, None)
@@ -745,7 +748,7 @@ class Router(SCIONElement):
         # First check if any error or no_process flags are set
         for (flag, *args) in flags:
             if flag == RouterFlag.ERROR:
-                logging.error("%s:\n%s", args[0], pkt)
+                logging.error("%s", args[0])
                 return False
             elif flag == RouterFlag.NO_PROCESS:
                 return False
@@ -753,19 +756,36 @@ class Router(SCIONElement):
         for (flag, *args) in flags:
             if flag == RouterFlag.FORWARD:
                 if from_local_as:
-                    logging.debug(
-                        "Packet forwarded over link by extension")
-                    self._egress_forward(pkt)
-                elif args[0] == 0:
-                    logging.debug("Packet delivered by extension")
-                    self.deliver(pkt, PT.DATA)
+                    self._process_fwd_flag(pkt)
                 else:
-                    next_hop = self.ifid2addr[args[0]]
-                    logging.debug("Packet forwarded by extension via %s",
-                                  next_hop)
-                    self.send(pkt, next_hop)
+                    self._process_fwd_flag(pkt, args[0])
+                return False
+            elif flag in (RouterFlag.DELIVER, RouterFlag.FORCE_DELIVER):
+                self._process_deliver_flag(pkt, flag)
                 return False
         return True
+
+    def _process_fwd_flag(self, pkt, ifid=None):
+        if ifid is None:
+            logging.debug("Packet forwarded over link by extension")
+            self._egress_forward(pkt)
+            return
+        if ifid == 0:
+            logging.error("Extension asked to forward this to interface 0:\n%s",
+                          pkt)
+            return
+        next_hop = self.ifid2addr[ifid]
+        logging.debug("Packet forwarded by extension via %s", next_hop)
+        self.send(pkt, next_hop)
+
+    def _process_deliver_flag(self, pkt, flag):
+        if (flag == RouterFlag.DELIVER and
+                pkt.addrs.dst.isd_as != self.addr.isd_as):
+            logging.error("Extension tried to deliver this locally, but this "
+                          "is not the destination ISD-AS:\n%s", pkt)
+            return
+        logging.debug("Packet delivered by extension")
+        self.deliver(pkt, PT.DATA)
 
     def handle_request(self, packet, _, from_local_socket=True):
         """
@@ -780,7 +800,7 @@ class Router(SCIONElement):
         try:
             pkt = SCIONL4Packet(packet)
         except SCIONBaseError:
-            log_exception("Error parsing packet: %s" % packet,
+            log_exception("Error parsing packet: %s" % hex_str(packet),
                           level=logging.ERROR)
             return
 
