@@ -1378,7 +1378,24 @@ void handle_request(struct rte_mbuf *m, uint8_t dpdk_rx_port)
         if (opt_ext_hdr){
             uint8_t *session_id = opt_ext_hdr + SCION_EXT_LINE;
             uint8_t *pvf = session_id + 2 * SCION_EXT_LINE;
-            // TODO update pvf
+
+            unsigned char key[16] = {0x00,0x01,0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15};
+            unsigned char iv[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+            struct keystruct rk; // AES-NI key structure
+            rk.roundkey = aes_assembly_init(key);
+            rk.iv = iv;
+            unsigned char input[16] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
+            unsigned char mac[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+            CBCMAC1BLK(rk.roundkey, rk.iv, input, mac);
+
+            int i;
+            for(i = 0; i < 16; i++){
+                printf("%u\n", mac[i]);
+            }
+
+
+
+
         }
 
         if (needs_local_processing(sch)) {

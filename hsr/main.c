@@ -561,6 +561,33 @@ static void check_all_ports_link_status(uint8_t port_num, uint32_t port_mask)
 
 int scion_init(int argc, char **argv);
 
+
+#ifdef AES_TEST
+typedef struct keystruct {
+    unsigned char* iv;				/* iv vector		*/
+    unsigned char* roundkey; 		/* AES round keys	*/
+}keystruct;
+
+int aes_test(int argc, char **argv){
+
+    unsigned char key[16] = {0x00,0x01,0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15};
+    unsigned char iv[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    struct keystruct rk; // AES-NI key structure
+    rk.roundkey = aes_assembly_init(key);
+    rk.iv = iv;
+    unsigned char input[16] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
+    unsigned char mac[16] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    CBCMAC1BLK(rk.roundkey, rk.iv, input, mac);
+
+    int i;
+    for(i = 0; i < 16; i++){
+        printf("%u\n", mac[i]);
+    }
+
+
+}
+#endif
+
 int main(int argc, char **argv)
 {
     struct lcore_queue_conf *qconf;
