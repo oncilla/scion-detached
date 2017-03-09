@@ -101,6 +101,7 @@ func Load(id, confDir string) *common.Error {
 	if conf.HFGenBlock, err = util.InitAES(hfGenKey); err != nil {
 		return err
 	}
+
 	// Create network configuration
 	conf.Net = netconf.FromTopo(conf.BR)
 	// Save config
